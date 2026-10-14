@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, getDocs, getDoc, setDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, arrayUnion
+  getFirestore, collection, addDoc, getDocs, getDoc, setDoc, updateDoc, deleteDoc, doc, query, where, onSnapshot, arrayUnion, writeBatch
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 /* =====================
@@ -106,9 +106,29 @@ function siguienteNumeroCaja(){
   return pad2(max + 1);
 }
 
-/* varias cajas pueden vivir dentro del mismo slot */
+/* =====================
+MATERIAL DE MIGRACIÓN (cajas pendientes de acomodar)
+-------------------------------------------------------
+Todas las cajas que ya existían antes de este cambio son material de
+migración: todavía no se sabe en qué posición real del rack están, así que
+se muestran aparte (a un lado de los racks) como "pendientes de acomodar".
+  - Caja de migración pendiente: migracion !== false  y  acomodada !== true
+    (las cajas viejas no tienen el campo `migracion`, por eso cuentan como
+    migración sin tener que modificar ningún dato guardado).
+  - Toda caja NUEVA se crea con migracion:false y se maneja como siempre.
+  - Al acomodar una caja de migración se guarda con acomodada:true y deja de
+    ser pendiente.
+===================== */
+function esCajaPendiente(c){
+  return !!c && c.migracion !== false && c.acomodada !== true;
+}
+window.esCajaPendiente = esCajaPendiente;
+
+/* varias cajas pueden vivir dentro del mismo slot
+   (las pendientes de acomodar NO cuentan: todavía no están en ningún slot) */
 function cajasDeSlot(rack, nivel, slot){
   return cacheCajas.filter(c =>
+    !esCajaPendiente(c) &&
     c.rack === rack &&
     Number(c.nivel) === Number(nivel) &&
     Number(c.slot) === Number(slot)
@@ -293,7 +313,7 @@ function agruparInventario(){
       const cant = Number(comp.cantidad) || 0;
 
       g.total += cant;
-      g.cajas.push({ ubicacion: c.ubicacion, cantidad: cant, nombreOriginal: comp.nombre });
+      g.cajas.push({ ubicacion: c.ubicacion, cantidad: cant, nombreOriginal: comp.nombre, pendiente: esCajaPendiente(c), caja: c.caja });
 
       const pn = String(comp.pn || "").trim().toUpperCase();
       if(pn && pn !== "NO APLICA") g.pns.add(pn);
@@ -334,16 +354,20 @@ window.showStock = async function(force){
 
     grupos.forEach(g=>{
 
+      /* las cajas de migración pendientes no tienen posición real todavía */
+      const ubiTxt = x => x.pendiente ? `CAJA ${x.caja || x.ubicacion} · PENDIENTE DE ACOMODAR` : x.ubicacion;
+      const cajaCorta = x => x.pendiente ? `CAJA ${x.caja || x.ubicacion}` : x.ubicacion;
+
       const cajasTd = g.cajas.map(x =>
-        `<div>${trEscape(x.ubicacion)} <span style="color:var(--ink-muted);font-weight:600;">× ${x.cantidad}</span></div>`
+        `<div>${trEscape(ubiTxt(x))} <span style="color:var(--ink-muted);font-weight:600;">× ${x.cantidad}</span></div>`
       ).join("");
 
       const accionesTd = isAdmin()
         ? g.cajas.map(x => `
 <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin:2px 0;">
-<span style="font-size:0.72rem;color:var(--ink-muted);min-width:78px;text-align:right;">${trEscape(x.ubicacion)}</span>
-<button style="padding:4px 9px;font-size:0.75rem;" title="Editar en la caja ${trEscape(x.ubicacion)}" onclick="editarMaterial('${invJsq(x.ubicacion)}','${invJsq(x.nombreOriginal)}')">✏</button>
-<button class="btn-danger" style="padding:4px 9px;font-size:0.75rem;" title="Eliminar de la caja ${trEscape(x.ubicacion)}" onclick="eliminarMaterial('${invJsq(x.ubicacion)}','${invJsq(x.nombreOriginal)}')">🗑</button>
+<span style="font-size:0.72rem;color:var(--ink-muted);min-width:78px;text-align:right;">${trEscape(cajaCorta(x))}</span>
+<button style="padding:4px 9px;font-size:0.75rem;" title="Editar en la caja ${trEscape(cajaCorta(x))}" onclick="editarMaterial('${invJsq(x.ubicacion)}','${invJsq(x.nombreOriginal)}')">✏</button>
+<button class="btn-danger" style="padding:4px 9px;font-size:0.75rem;" title="Eliminar de la caja ${trEscape(cajaCorta(x))}" onclick="eliminarMaterial('${invJsq(x.ubicacion)}','${invJsq(x.nombreOriginal)}')">🗑</button>
 </div>`).join("")
         : `<span style="color:var(--ink-soft);">—</span>`;
 
@@ -834,7 +858,7 @@ window.eliminarRack = async function(nombre){
 
     await deleteDoc(doc(db,"racks",nombre));
 
-    const relacionadas = cacheCajas.filter(c => c.rack === nombre);
+    const relacionadas = cacheCajas.filter(c => c.rack === nombre && !esCajaPendiente(c));   // las pendientes de acomodar no están en el rack: no se borran
     for(const c of relacionadas){
       await deleteDoc(doc(db,"cajas",c.ubicacion));
     }
@@ -902,7 +926,8 @@ window.crearCajaEnSlot = async function(rack, nivel, slot, opts){
 
     await setDoc(cajaRef, {
       rack, nivel: parseInt(nivel), slot: parseInt(slot), caja: cajaId, ubicacion,
-      componentes: []
+      componentes: [],
+      migracion: false      // caja nueva: no es material de migración
     });
     // tamaño físico y estado (llena / poco contenido...) elegidos al crearla
     const extra = {};
@@ -1717,6 +1742,142 @@ window.getDatosAlmacen = function(){
 };
 
 /* =====================
+   MATERIAL DE MIGRACIÓN — acomodo de cajas pendientes
+   ===================== */
+
+/* Lista de cajas pendientes de acomodar (ordenadas por número de caja). */
+window.getCajasPendientes = function(){
+  return cacheCajas
+    .filter(esCajaPendiente)
+    .sort((a,b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, { numeric:true }));
+};
+
+/* Consulta un número de caja y dice en qué situación está:
+     "pendiente"  → es de migración y falta acomodarla (devuelve su contenido)
+     "acomodada"  → era de migración y ya está en un rack
+     "nueva"      → es material nuevo (no aplica el acomodo)
+     "noexiste"   → no hay ninguna caja con ese número */
+window.consultarCajaMigracion = function(numero){
+
+  const n = normCaja(numero);
+  if(!n) return { estado:"vacio" };
+
+  const coincidencias = cacheCajas.filter(c => normCaja(c.caja || "") === n);
+  if(coincidencias.length === 0) return { estado:"noexiste", numero:n };
+
+  const pend = coincidencias.find(esCajaPendiente);
+  if(pend){
+    const comps = (pend.componentes || []).map(x => ({
+      nombre: x.nombre, pn: x.pn, cantidad: Number(x.cantidad) || 0, categoria: x.categoria || ""
+    }));
+    return {
+      estado:"pendiente", numero:n, ubicacionActual: pend.ubicacion, caja: pend.caja || n,
+      componentes: comps,
+      total: comps.reduce((t,x) => t + x.cantidad, 0)
+    };
+  }
+
+  const c = coincidencias[0];
+  if(c.acomodada === true) return { estado:"acomodada", numero:n, ubicacion:c.ubicacion };
+  return { estado:"nueva", numero:n, ubicacion:c.ubicacion };
+};
+
+/* Asigna una caja de migración a su posición real (rack / nivel / slot).
+   Crea la caja en la nueva posición con TODO su contenido y datos (estado,
+   tamaño, categorías...), la marca como acomodada y borra el registro
+   pendiente — todo en una sola operación atómica. Desde ese momento
+   desaparece del área de pendientes y aparece dentro del rack. */
+window.acomodarCajaMigrada = async function(ubicacionActual, rack, nivel, slot){
+
+  if(!ubicacionActual || !rack || !nivel || !slot){
+    alert("Falta la posición de destino (rack, nivel y slot)");
+    return false;
+  }
+
+  try{
+
+    await loadRacks(true);
+    const rackInfo = cacheRacks.find(r => r.nombre === rack);
+    if(!rackInfo || rackInfo.status !== "active"){
+      alert(`El rack ${rack} no existe o está inactivo`);
+      return false;
+    }
+    if(Number(nivel) < 1 || Number(nivel) > Number(rackInfo.niveles) ||
+       Number(slot)  < 1 || Number(slot)  > Number(rackInfo.slots)){
+      alert("Esa posición no existe en el rack");
+      return false;
+    }
+
+    const origenRef = doc(db,"cajas",ubicacionActual);
+    const origenSnap = await getDoc(origenRef);
+
+    if(!origenSnap.exists() || !esCajaPendiente(origenSnap.data())){
+      alert("Esta caja ya fue acomodada (o ya no está pendiente). Se actualizará la vista.");
+      await loadCajas(true);
+      if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+      return false;
+    }
+
+    const datos = origenSnap.data();
+    const cajaId = normCaja(datos.caja || datos.ubicacion);
+    const ubicacionNueva = buildUbicacion(rack, nivel, slot, cajaId);
+
+    const destinoRef = doc(db,"cajas",ubicacionNueva);
+
+    if(ubicacionNueva !== ubicacionActual){
+      const destinoSnap = await getDoc(destinoRef);
+      if(destinoSnap.exists()){
+        alert(`Ya existe un registro en ${ubicacionNueva}`);
+        return false;
+      }
+    }
+
+    const nuevaCaja = {
+      ...datos,
+      rack, nivel: parseInt(nivel), slot: parseInt(slot),
+      caja: cajaId, ubicacion: ubicacionNueva,
+      componentes: datos.componentes || [],
+      migracion: true,
+      acomodada: true,
+      acomodadaPor: getUser(),
+      acomodadaEn: Date.now()
+    };
+
+    const lote = writeBatch(db);
+    lote.set(destinoRef, nuevaCaja);                         // si el id no cambia, solo se actualiza
+    if(ubicacionNueva !== ubicacionActual) lote.delete(origenRef);
+    await lote.commit();
+
+    const totalPiezas = (datos.componentes || []).reduce((t,x) => t + (Number(x.cantidad)||0), 0);
+
+    await addHist({
+      ts: Date.now(),
+      sid: SESION_ID,
+      fecha: new Date().toLocaleString(),
+      accion: "ACOMODO CAJA",
+      ubicacion: `CAJA ${cajaId} (PENDIENTE) → ${ubicacionNueva}`,
+      nombre: "Caja de migración",
+      cantidad: totalPiezas,
+      responsable: getUser(),
+      comentarios: "ACOMODO DE MATERIAL DE MIGRACION",
+      sinFila: true
+    });
+
+    await loadCajas(true);
+    if(typeof window.showStock === "function") await window.showStock(true);
+    if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+
+    return ubicacionNueva;
+
+  }catch(e){
+    console.error(e);
+    alert("Error acomodando la caja");
+    return false;
+  }
+
+};
+
+/* =====================
 RENDER PÁGINA RACKS & CAJAS
 ===================== */
 
@@ -1738,7 +1899,7 @@ window.renderRacksPage = async function(){
 
   cacheRacks.forEach(r=>{
 
-    const cajasDelRack = cacheCajas.filter(c => c.rack === r.nombre);
+    const cajasDelRack = cacheCajas.filter(c => c.rack === r.nombre && !esCajaPendiente(c));
     const totalCajas = cajasDelRack.length;
     const conContenido = cajasDelRack.filter(c => (c.componentes||[]).length > 0).length;
 
@@ -1841,8 +2002,10 @@ ${isAdmin() ? `<button class="slot-add slot-del" title="Eliminar caja" onclick="
 
     const infoCajas = document.getElementById("contadorCajas3D");
     if(infoCajas){
-      const cajasDelArea = cacheCajas.filter(c => activos.some(r => r.nombre === c.rack));
-      const totalCajas = cajasDelArea.length;
+      const pendientes = cacheCajas.filter(esCajaPendiente);
+      const cajasEnRacks = cacheCajas.filter(c => !esCajaPendiente(c) && activos.some(r => r.nombre === c.rack));
+      const cajasDelArea = cajasEnRacks.concat(pendientes);   // el material pendiente también está físicamente en el área
+      const totalCajas = cajasEnRacks.length;
 
       const materialesArea = new Set();
       cajasDelArea.forEach(c => (c.componentes||[]).forEach(x => {
@@ -1855,6 +2018,7 @@ ${isAdmin() ? `<button class="slot-add slot-del" title="Eliminar caja" onclick="
       const plural = (n, uno, varios) => n === 1 ? uno : varios;
       infoCajas.innerHTML =
         `<span class="stat-chip"><i class="dot dot-cajas"></i><b>${totalCajas}</b><em>${plural(totalCajas, "caja", "cajas")}</em></span>` +
+        (pendientes.length ? `<span class="stat-chip"><i class="dot dot-pend"></i><b>${pendientes.length}</b><em>${plural(pendientes.length, "caja pendiente", "cajas pendientes")} de acomodar</em></span>` : "") +
         `<span class="stat-chip"><i class="dot dot-area"></i><b>${materialesArea.size}</b><em>${plural(materialesArea.size, "material distinto", "materiales distintos")} en el área</em></span>` +
         `<span class="stat-chip"><i class="dot dot-tool"></i><b>${materialesToolCrib}</b><em>${plural(materialesToolCrib, "material distinto", "materiales distintos")} en Tool Crib</em></span>`;
     }
@@ -1893,7 +2057,7 @@ window.printLabels = async function(){
   const nombresActivos = new Set(activos.map(r => r.nombre));
 
   const cajasActivas = cacheCajas
-    .filter(c => nombresActivos.has(c.rack))
+    .filter(c => !esCajaPendiente(c) && nombresActivos.has(c.rack))
     .sort((a,b) => a.ubicacion.localeCompare(b.ubicacion));
 
   if(cajasActivas.length === 0){
@@ -2438,6 +2602,7 @@ window.regresarDeToolCrib = async function(nombreMaterial, cantidad, destino){
 
       await setDoc(doc(db,"cajas",ubicacionDestino), {
         rack, nivel: parseInt(nivel), slot: parseInt(slot), caja: normCaja(caja), ubicacion: ubicacionDestino,
+        migracion: false,
         componentes: [{
           nombre: nombreMaterial, pn: cribData.pn || "NO APLICA", cantidad,
           comentarios: "Regresado de Tool Crib", responsable: getUser()
@@ -2703,6 +2868,12 @@ window.moverCajaUbicacion = async function(ubicacionOrigen, rackDestino, nivelDe
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
 
     const dataOrigen = origenSnap.data();
+
+    if(esCajaPendiente(dataOrigen)){
+      alert("Esta caja es material de migración pendiente de acomodar. Acomódala desde Racks y Cajas: abre la rejilla (slot) donde va y escribe su número.");
+      return false;
+    }
+
     const etiqueta = normCaja(cajaDestinoLabel || dataOrigen.caja || dataOrigen.ubicacion);
 
     if(!etiqueta){ alert("Número de caja de destino inválido"); return false; }
@@ -2730,7 +2901,10 @@ window.moverCajaUbicacion = async function(ubicacionOrigen, rackDestino, nivelDe
       componentes: dataOrigen.componentes || [],
       estado: dataOrigen.estado || null,
       tamano: dataOrigen.tamano || null,
-      capacidad: (typeof dataOrigen.capacidad === "number") ? dataOrigen.capacidad : null
+      capacidad: (typeof dataOrigen.capacidad === "number") ? dataOrigen.capacidad : null,
+      // conserva si venía de la migración (ya acomodada) o si es caja nueva
+      migracion: dataOrigen.migracion === true ? true : false,
+      ...(dataOrigen.acomodada === true ? { acomodada: true } : {})
     });
 
     await deleteDoc(origenRef);
@@ -3132,6 +3306,7 @@ const TR_ACCIONES = {
   "SALIDA":              { icono:"⬆️", verbo:"registró una salida", tu:"registraste una salida", color:"#ff5a1f" },
   "MOVIMIENTO MATERIAL": { icono:"🔀", verbo:"movió material", tu:"moviste material", color:"#3b82f6" },
   "MOVIMIENTO CAJA":     { icono:"📦", verbo:"movió una caja completa", tu:"moviste una caja completa", color:"#3b82f6" },
+  "ACOMODO CAJA":        { icono:"📍", verbo:"acomodó una caja de migración", tu:"acomodaste una caja de migración", color:"#0ea5e9" },
   "ENVIO TOOL CRIB":     { icono:"🧰", verbo:"envió a Tool Crib", tu:"enviaste a Tool Crib", color:"#a855f7" },
   "REGRESO TOOL CRIB":   { icono:"↩️", verbo:"regresó de Tool Crib", tu:"regresaste de Tool Crib", color:"#a855f7" },
   "ENVIO SCRAP":         { icono:"🗑️", verbo:"envió a Scrap", tu:"enviaste a Scrap", color:"#e5484d" },
@@ -3207,7 +3382,7 @@ function trMostrarToast(mov){
 
   const cant = (mov.cantidad !== undefined && mov.cantidad !== null && mov.cantidad !== "")
     ? `<b>${trEscape(mov.cantidad)}</b> × ` : "";
-  const detalle = mov.accion === "MOVIMIENTO CAJA"
+  const detalle = (mov.accion === "MOVIMIENTO CAJA" || mov.accion === "ACOMODO CAJA")
     ? `${cant}pzs en total`
     : `${cant}<b>${trEscape(mov.nombre || "")}</b>`;
 

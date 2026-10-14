@@ -391,3 +391,46 @@ match /mensajes/{id} {
 }
 ```
 (Sin estas reglas el chat no funciona, y sin la regla de `mensajes` no se garantiza que cada mensaje sea visible solo para su destinatario.)
+
+---
+
+## Update: Material de migración — cajas pendientes de acomodar
+
+**Archivos modificados:** `app.js`, `rack3d.js`, `rack3d.css`, `racks.html`, `historial.html`, `CAMBIOS.md`
+(no hay archivos nuevos ni colecciones nuevas en Firestore: **no hay que cambiar las reglas**).
+
+### Qué es "material de migración"
+Todas las cajas que ya estaban registradas antes de este update. No se sabe todavía en qué
+posición real del rack está cada una, así que **dejan de dibujarse dentro de los racks** y se
+muestran aparte, a un lado, como **pendientes de acomodar**. No se modifica ningún dato guardado:
+una caja cuenta como de migración si no tiene el campo `migracion` (las cajas viejas no lo tienen).
+Toda caja **nueva** se crea con `migracion:false` y funciona exactamente como siempre.
+
+### Racks y Cajas (visor 3D)
+- **Área "PENDIENTES DE ACOMODAR"** a la derecha del último rack: tarima con letrero y el total,
+  con las cajas pendientes en rejilla (apiladas si son muchas). La vista general se encuadra para
+  que se vean los racks y el área.
+- Clic en el área (o en una caja pendiente) → la cámara se acerca y se abre un **panel con la lista**
+  de pendientes (número de caja, piezas y materiales), con filtro por caja o material.
+- **Acomodar una caja:** abre un rack → nivel → rejilla (slot). Abajo aparece
+  **"Nº de caja pendiente" + "📥 Acomodar caja aquí"** (con autocompletado de los números pendientes).
+  Al ingresar el número se abre una ventana con **el contenido de la caja** y la posición destino.
+  **Confirmar y guardar** → la caja desaparece de pendientes y pasa al rack, en esa posición, con todo
+  su contenido, estado, tamaño y categorías. Es una sola operación atómica (crea en el slot y borra
+  el registro pendiente a la vez).
+- Si el número no es pendiente avisa por qué: no existe, ya fue acomodada (y dónde), o es material nuevo.
+- Si otro usuario acomoda la misma caja al mismo tiempo, el sistema lo detecta y no duplica nada.
+- El buscador del 3D también encuentra (y hace parpadear) las cajas pendientes.
+- El chip de arriba muestra cuántas cajas hay **en racks** y, aparte, cuántas están **pendientes**.
+  "Materiales distintos en el área" cuenta también lo pendiente.
+
+### Otras secciones
+- **Inventario:** las cajas pendientes aparecen como `CAJA 06 · PENDIENTE DE ACOMODAR` en vez de una
+  ubicación provisional. Las cantidades siguen sumándose igual.
+- **Historial:** el acomodo queda como `ACOMODO CAJA` (nuevo filtro) y genera el aviso flotante.
+- **Mover cajas / slots, Registrar Entrada, Imprimir etiquetas de slots:** no incluyen las pendientes
+  (todavía no están en ningún slot). Una caja pendiente se acomoda desde el visor; ya acomodada se
+  puede mover y usar como cualquier otra.
+- **Eliminar rack** ya no borra las cajas pendientes (no están dentro del rack).
+- El número de caja sigue siendo único en todo el almacén, también contra las pendientes. Las
+  etiquetas físicas no cambian (van por número de caja).

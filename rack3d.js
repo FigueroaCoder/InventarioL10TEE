@@ -35,6 +35,16 @@
 
   let vistaGuardada = null;  // para restaurar tras recargar datos
 
+  /* Material de migración: cajas pendientes de acomodar (a un lado de los racks) */
+  let pendBoxes = [];            // cajas pendientes dibujadas en el área de pendientes
+  let pendZona = null;           // medidas/posición del área de pendientes
+  let enPendientes = false;      // la cámara está viendo el área de pendientes
+  let pendPanel = { abierto: false, filtro: "" };
+  let pendModal = null;          // { ubicacionActual, caja, slotId } mientras se confirma un acomodo
+  let pendConfirmando = false;
+  let vistaGlobal = null;        // cámara de la vista general (se ajusta para incluir el área de pendientes)
+  let ajusteInicial = false;
+
   const raycaster = new THREE.Raycaster();
   const mouse = new THREE.Vector2();
   const tempV = new THREE.Vector3();
@@ -149,6 +159,10 @@
     return { escala: esc, items };
   }
 
+  function esPend(c) {
+    return typeof window.esCajaPendiente === "function" ? window.esCajaPendiente(c) : false;
+  }
+
   function esAdmin() {
     return typeof window.isAdminUser === "function" ? window.isAdminUser() : false;
   }
@@ -172,6 +186,20 @@
     ctx.fillStyle = '#000000'; ctx.font = '900 44px "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(text, 128, 64);
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  function createSignTexture(l1, l2) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 160;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#facc15'; ctx.fillRect(0, 0, 512, 160);
+    ctx.strokeStyle = '#78350f'; ctx.lineWidth = 10; ctx.strokeRect(5, 5, 502, 150);
+    ctx.fillStyle = '#1c1917'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '900 44px "Segoe UI", Arial, sans-serif';
+    ctx.fillText(l1, 256, 60);
+    ctx.font = '700 36px "Segoe UI", Arial, sans-serif';
+    ctx.fillText(l2, 256, 116);
     return new THREE.CanvasTexture(canvas);
   }
 
@@ -296,6 +324,8 @@
         .join('');
     }
 
+    vistaGlobal = { pos: new THREE.Vector3(6, 4.5, 7.5), target: new THREE.Vector3(1.5, 1.2, 0) };
+
     iniciado = true;
     animate();
   }
@@ -328,6 +358,9 @@
     raycastTargets = [];
     racksData = [];
     allBoxes = [];
+    pendBoxes = [];
+    pendZona = null;
+    enPendientes = false;
     activeSlot = null;
     inspectedBox = null;
     hoveredObject = null;
@@ -360,16 +393,32 @@
   /* =====================
      CONSTRUCCIÓN DESDE DATOS REALES
   ===================== */
+  /* Área de pendientes de acomodar: una tarima a la derecha del último rack con las
+     cajas de migración en rejilla (y apiladas si son muchas). */
+  const PEND_COLS = 6, PEND_CELL_W = 0.25, PEND_CELL_D = 0.27, PEND_MAX_ROWS = 5;
+  function medidasZonaPend(n) {
+    if (n <= 0) return null;
+    const cols = Math.min(PEND_COLS, n);
+    const rowsCapa = Math.min(PEND_MAX_ROWS, Math.ceil(n / cols));
+    return { cols, rowsCapa, porCapa: cols * rowsCapa, w: cols * PEND_CELL_W + 0.2, d: rowsCapa * PEND_CELL_D + 0.2 };
+  }
+
   function construir(racks, cajas) {
 
     limpiarMundo();
 
     const activos = (racks || []).filter(r => r.status === "active");
 
+    // cajas de migración pendientes de acomodar (no están en ningún slot todavía)
+    const pend = (cajas || []).filter(esPend)
+      .sort((a, b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, { numeric: true }));
+    const medPend = medidasZonaPend(pend.length);
+
     // --- piso y pared ---
     const anchoTotal = Math.max(
       12,
       activos.reduce((acc, r) => acc + (Number(r.slots) || 1) * SLOT_W + GAP_RACKS, 0) + 6
+        + (medPend ? medPend.w + 1.5 : 0)
     );
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(anchoTotal + 10, 25), matFloor);
@@ -473,6 +522,7 @@
 
           // --- CAJAS REALES DE ESTE SLOT ---
           const cajasSlot = (cajas || []).filter(c =>
+            !esPend(c) &&
             c.rack === rack.nombre &&
             Number(c.nivel) === nivel &&
             Number(c.slot) === slot
@@ -590,6 +640,138 @@
 
       cursorX += shelfWidth + GAP_RACKS;
     });
+
+    // --- ÁREA DE PENDIENTES (a un lado de los racks) ---
+    vistaGlobal = { pos: new THREE.Vector3(6, 4.5, 7.5), target: new THREE.Vector3(1.5, 1.2, 0) };
+    if (medPend) {
+      construirPendientes(pend, medPend, cursorX + 0.7);
+      const finX = pendZona.x0 + pendZona.w;
+      const cx = Math.max(1.5, finX / 2);
+      const f = Math.max(1, finX / 6);
+      vistaGlobal = {
+        target: new THREE.Vector3(cx, 1.2, 0),
+        pos: new THREE.Vector3(cx + 4.5 * f, 1.2 + 3.3 * f, 7.5 * f)
+      };
+    }
+  }
+
+  function construirPendientes(pend, med, x0) {
+
+    const zIni = -0.45;                       // la tarima arranca pegada a la pared
+    const zCentro = zIni + med.d / 2;
+    const cx = x0 + med.w / 2;
+
+    // tarima
+    const tarimaGeo = new THREE.BoxGeometry(med.w, 0.04, med.d);
+    const tarima = new THREE.Mesh(tarimaGeo, new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.7 }));
+    tarima.position.set(cx, 0.02, zCentro);
+    tarima.receiveShadow = true;
+    worldGroup.add(tarima);
+    const borde = new THREE.LineSegments(new THREE.EdgesGeometry(tarimaGeo), new THREE.LineBasicMaterial({ color: 0xfacc15 }));
+    borde.position.copy(tarima.position);
+    worldGroup.add(borde);
+
+    // letrero
+    const nTxt = pend.length + (pend.length === 1 ? " CAJA" : " CAJAS");
+    const letrero = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.max(med.w, 1.5), Math.max(med.w, 1.5) * 160 / 512),
+      new THREE.MeshBasicMaterial({ map: createSignTexture("PENDIENTES DE ACOMODAR", nTxt) })
+    );
+    letrero.position.set(cx, 1.25, -0.5);
+    worldGroup.add(letrero);
+
+    // cajas (en rejilla; si son más de las que caben en el piso, se apilan)
+    const alturaPila = {};
+    let alturaMax = 0;
+
+    pend.forEach((c, i) => {
+      const idx = i % med.porCapa;
+      const col = idx % med.cols;
+      const row = Math.floor(idx / med.cols);
+      const tConfig = tamanoDeCaja(c);
+      const d = tConfig.dims;
+
+      const key = col + ',' + row;
+      const base = alturaPila[key] || 0;
+      alturaPila[key] = base + d.h;
+      alturaMax = Math.max(alturaMax, alturaPila[key]);
+
+      const posX = x0 + 0.1 + (col + 0.5) * PEND_CELL_W;
+      const posZ = zIni + 0.1 + (row + 0.5) * PEND_CELL_D;
+      const posY = 0.04 + base + d.h / 2;
+
+      const etiqueta = String(c.caja || c.ubicacion);
+      const boxMaterials = [
+        matBoxSide, matBoxSide, matBoxSide, matBoxSide,
+        createFrontLabelMaterial(etiqueta, '#facc15'),
+        matBoxSide
+      ];
+
+      const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(d.w, d.h, d.d), boxMaterials);
+      const homePos = new THREE.Vector3(posX, posY, posZ);
+      boxMesh.position.copy(homePos);
+      boxMesh.castShadow = true;
+      worldGroup.add(boxMesh);
+
+      const glowMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(d.w * 1.08, d.h * 1.08, d.d * 1.08),
+        new THREE.MeshBasicMaterial({ color: 0xfacc15, wireframe: true, transparent: true, opacity: 0 })
+      );
+      glowMesh.position.copy(homePos);
+      glowMesh.visible = false;
+      worldGroup.add(glowMesh);
+
+      const glowLight = new THREE.PointLight(0xfacc15, 0, 1.2);
+      glowLight.position.copy(homePos);
+      worldGroup.add(glowLight);
+
+      const dashLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([homePos.clone(), homePos.clone()]),
+        new THREE.LineDashedMaterial({ color: 0xfacc15, dashSize: 0.05, gapSize: 0.03 })
+      );
+      dashLine.visible = false;
+      worldGroup.add(dashLine);
+
+      const originTag = document.createElement('div');
+      originTag.className = 'origin-label';
+      originTag.innerText = 'PENDIENTE · CAJA ' + etiqueta;
+      overlay.appendChild(originTag);
+
+      const boxData = {
+        id: c.ubicacion,            // ID real en Firestore (posición provisional de la migración)
+        etiqueta,
+        pendiente: true,
+        slotCode: 'PENDIENTES',
+        homePos: homePos.clone(),
+        mesh: boxMesh,
+        glowMesh, glowLight, dashLine, originTag,
+        cardElem: null,
+        items: (c.componentes || []).map(x => ({
+          name: x.nombre,
+          pn: x.pn,
+          qty: Number(x.cantidad) || 0,
+          categoria: x.categoria || ""
+        }))
+      };
+
+      boxMesh.userData = { type: 'pbox', data: boxData };
+      pendBoxes.push(boxData);
+      allBoxes.push(boxData);
+      raycastTargets.push(boxMesh);
+    });
+
+    // zona clicable (toda la tarima con sus cajas)
+    const altoZona = Math.max(0.6, alturaMax + 0.45);
+    const hit = new THREE.Mesh(
+      new THREE.BoxGeometry(med.w, altoZona, med.d),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    hit.position.set(cx, altoZona / 2, zCentro);
+
+    pendZona = { x0, w: med.w, d: med.d, cx, zCentro, alto: altoZona };
+    hit.userData = { type: 'pzone', data: pendZona };
+    worldGroup.add(hit);
+    raycastTargets.push(hit);
   }
 
   /* =====================
@@ -612,9 +794,12 @@
 
       if (currentLevel === 0) {
         if (searchTerm) {
-          hit = intersects.find(i => i.object.userData.type === 'box' && i.object.userData.data.dashLine.visible)?.object;
+          hit = intersects.find(i => (i.object.userData.type === 'box' || i.object.userData.type === 'pbox') && i.object.userData.data.dashLine.visible)?.object;
         }
-        if (!hit) hit = intersects.find(i => i.object.userData.type === 'rack')?.object;
+        // lo más cercano entre un rack y el área de pendientes
+        if (!hit) hit = intersects.find(i => ['rack', 'pzone'].includes(i.object.userData.type))?.object;
+      } else if (currentLevel === 1 && enPendientes) {
+        hit = intersects.find(i => i.object.userData.type === 'pbox')?.object;
       } else if (currentLevel === 1) {
         hit = intersects.find(i => i.object.userData.type === 'slot')?.object;
       }
@@ -675,6 +860,8 @@
     const data = hoveredObject.userData.data;
 
     if (type === 'box') inspectSingleBox(data);
+    else if (type === 'pzone') zoomToPendientes();
+    else if (type === 'pbox') { if (!enPendientes) zoomToPendientes(); abrirPanelPend(data.etiqueta); enfocarPendiente(data.etiqueta); }
     else if (currentLevel === 0 && type === 'rack') zoomToRack(data);
     else if (currentLevel === 1 && type === 'slot') zoomToSlotAndSpreadBoxes(data);
   }
@@ -718,6 +905,8 @@
   function zoomToRack(rack, push) {
     if (push !== false) pushState();
     currentLevel = 1;
+    enPendientes = false;
+    cerrarPanelPend();
     clearHover();
 
     const camDist = Math.max(4.1, rack.slots * 1.1);
@@ -729,10 +918,210 @@
     vistaGuardada = { level: 1, rack: rack.rackIndex };
   }
 
+  function zoomToPendientes() {
+    if (!pendZona) return;
+    pushState();
+    currentLevel = 1;
+    enPendientes = true;
+    clearHover();
+
+    animateCamera(
+      new THREE.Vector3(pendZona.cx + 0.5, 1.5, pendZona.zCentro + 3.1),
+      new THREE.Vector3(pendZona.cx, 0.35, pendZona.zCentro)
+    );
+
+    hud("Pendientes de acomodar",
+      "Material de migración. Para acomodar una caja, abre la rejilla (slot) del rack donde va y escribe su número.",
+      "PENDIENTES");
+    vistaGuardada = { level: 'pend' };
+    abrirPanelPend();
+  }
+
+  /* ---------- panel con la lista de pendientes ---------- */
+  function cerrarPanelPend() {
+    pendPanel.abierto = false;
+    if (overlay) overlay.querySelectorAll('.pend-panel').forEach(e => e.remove());
+  }
+
+  function cerrarModalPend() {
+    pendModal = null;
+    if (overlay) overlay.querySelectorAll('.pend-modal').forEach(e => e.remove());
+  }
+
+  function abrirPanelPend(filtro) {
+    if (!overlay) return;
+    pendPanel.abierto = true;
+    if (filtro !== undefined) pendPanel.filtro = String(filtro || "");
+
+    overlay.querySelectorAll('.pend-panel').forEach(e => e.remove());
+
+    const p = document.createElement('div');
+    p.className = 'pend-panel';
+    p.innerHTML = `
+      <div class="pend-head">
+        <b>📦 Pendientes de acomodar</b>
+        <span class="pend-count" id="pend-count">${pendBoxes.length}</span>
+        <button class="pend-x" onclick="Rack3D.cerrarPanelPend()" title="Cerrar">✕</button>
+      </div>
+      <div class="pend-hint">Para acomodar una caja: entra al rack, abre la rejilla (slot) donde va y escribe aquí su número.</div>
+      <input type="text" id="pend-filter" class="pend-filter" placeholder="Filtrar por caja o material..." autocomplete="off"
+        value="${esc(pendPanel.filtro)}" oninput="Rack3D.filtrarPend(this.value)">
+      <div class="pend-list" id="pend-rows"></div>`;
+    overlay.appendChild(p);
+    pintarFilasPend();
+  }
+
+  function pintarFilasPend() {
+    const cont = document.getElementById('pend-rows');
+    if (!cont) return;
+    const q = String(pendPanel.filtro || "").toLowerCase().trim();
+
+    const lista = pendBoxes.filter(b => !q ||
+      String(b.etiqueta).toLowerCase().includes(q) ||
+      b.items.some(i => String(i.name || "").toLowerCase().includes(q) || String(i.pn || "").toLowerCase().includes(q)));
+
+    if (lista.length === 0) {
+      cont.innerHTML = '<div class="pend-empty">' + (pendBoxes.length ? 'Sin coincidencias' : 'No quedan cajas pendientes 🎉') + '</div>';
+      return;
+    }
+
+    cont.innerHTML = lista.map(b => {
+      const total = b.items.reduce((t, i) => t + i.qty, 0);
+      const mats = b.items.slice(0, 5).map(i => `${esc(i.name)} ×${i.qty}`).join(' · ')
+        + (b.items.length > 5 ? ` · +${b.items.length - 5} más` : '');
+      return `
+        <div class="pend-row" onclick="Rack3D.enfocarPendiente('${escJs(b.etiqueta)}')">
+          <div class="pend-row-top"><b>CAJA ${esc(b.etiqueta)}</b><span>${total} pzs</span></div>
+          <div class="pend-mat">${mats || '<i>Vacía</i>'}</div>
+        </div>`;
+    }).join('');
+  }
+
+  function filtrarPend(v) {
+    pendPanel.filtro = String(v || "");
+    pintarFilasPend();
+  }
+
+  /* destello de una caja pendiente en el área */
+  function enfocarPendiente(etiqueta) {
+    const b = pendBoxes.find(x => x.etiqueta === etiqueta);
+    if (!b) return;
+    const searchInput = document.getElementById('r3d-search');
+    if (searchInput && searchInput.value.trim()) return;   // no pelear con la búsqueda activa
+    let n = 0;
+    const t = setInterval(() => {
+      n++;
+      const on = n % 2 === 1;
+      b.glowMesh.visible = on;
+      b.glowMesh.material.opacity = on ? 0.9 : 0;
+      b.glowLight.intensity = on ? 6 : 0;
+      if (n >= 7) { clearInterval(t); b.glowMesh.visible = false; b.glowLight.intensity = 0; }
+    }, 300);
+  }
+
+  /* ---------- acomodar una caja pendiente en el slot abierto ---------- */
+  function asignarHtml() {
+    if (!pendBoxes.length) return '';
+    const opts = pendBoxes.map(b => `<option value="${esc(b.etiqueta)}"></option>`).join('');
+    return `
+      <div class="pend-assign">
+        <input type="text" id="pend-num" class="pend-num" list="pend-datalist" placeholder="Nº de caja pendiente" autocomplete="off"
+          onkeydown="if(event.key==='Enter'){Rack3D.buscarPendiente();}">
+        <datalist id="pend-datalist">${opts}</datalist>
+        <button class="btn-mini btn-pend" onclick="Rack3D.buscarPendiente()" title="Buscar la caja pendiente y acomodarla en este slot">📥 Acomodar caja aquí</button>
+      </div>`;
+  }
+
+  function buscarPendiente() {
+    if (!activeSlot) return;
+    if (typeof window.consultarCajaMigracion !== "function") { alert("Sistema no disponible"); return; }
+
+    const inp = document.getElementById('pend-num');
+    const valor = (inp && inp.value || "").trim();
+    if (!valor) { alert("Escribe el número de la caja"); return; }
+
+    const r = window.consultarCajaMigracion(valor);
+
+    if (r.estado === "pendiente") { abrirModalPend(r, activeSlot); return; }
+
+    const msgs = {
+      noexiste: `No existe ninguna caja con el número ${r.numero}.`,
+      acomodada: `La caja ${r.numero} ya fue acomodada (está en ${r.ubicacion}).`,
+      nueva: `La caja ${r.numero} es material nuevo (no es de migración): ya está registrada en ${r.ubicacion}.`
+    };
+    alert(msgs[r.estado] || "Número de caja inválido");
+  }
+
+  function abrirModalPend(info, slot) {
+    pendModal = { ubicacionActual: info.ubicacionActual, caja: info.caja, slotId: slot.id };
+    pintarModalPend(info, slot);
+  }
+
+  function pintarModalPend(info, slot) {
+    overlay.querySelectorAll('.pend-modal').forEach(e => e.remove());
+
+    const filas = info.componentes.map(x => `
+      <div class="pend-crow">
+        <span class="pend-cname" title="${esc(x.nombre)}">${esc(x.nombre)}${(x.pn && x.pn !== 'NO APLICA') ? ` <small>· ${esc(x.pn)}</small>` : ''}</span>
+        <b>${x.cantidad} pzs</b>
+      </div>`).join('');
+
+    const m = document.createElement('div');
+    m.className = 'pend-modal';
+    m.innerHTML = `
+      <div class="pend-dialog">
+        <div class="pend-dialog-title">Confirmar acomodo de caja</div>
+        <div class="pend-dest">
+          CAJA <b>${esc(info.caja)}</b> &nbsp;→&nbsp; <b>${esc(slot.id)}</b>
+          <small>Rack ${esc(slot.rackIndex)} · Nivel ${pad2(slot.level)} · Slot ${pad2(slot.slotIndex)}</small>
+        </div>
+        <div class="pend-contents-title">Contenido registrado de esta caja</div>
+        <div class="pend-contents">${filas || '<span class="pend-vacia">Caja vacía (sin material registrado)</span>'}</div>
+        <div class="pend-total">${info.total} pzs en total · ${info.componentes.length} ${info.componentes.length === 1 ? 'material' : 'materiales'}</div>
+        <p class="pend-ask">¿Es esta la caja que está físicamente en esta posición?</p>
+        <div class="pend-actions">
+          <button class="btn-mini" onclick="Rack3D.cancelarPendiente()">Cancelar</button>
+          <button class="btn-mini btn-pend-ok" id="pend-ok" onclick="Rack3D.confirmarPendiente()">✔ Confirmar y guardar</button>
+        </div>
+      </div>`;
+    overlay.appendChild(m);
+  }
+
+  function cancelarPendiente() { cerrarModalPend(); }
+
+  async function confirmarPendiente() {
+    if (!pendModal || pendConfirmando) return;
+    const st = pendModal;
+    const slot = activeSlot;
+    if (!slot || slot.id !== st.slotId) { cerrarModalPend(); return; }
+    if (typeof window.acomodarCajaMigrada !== "function") { alert("Sistema no disponible"); return; }
+
+    const btn = document.getElementById('pend-ok');
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+
+    pendConfirmando = true;
+    vistaGuardada = { level: 2, slot: slot.id };   // al guardar, el visor se queda en este slot
+    let ok = false;
+    try {
+      ok = await window.acomodarCajaMigrada(st.ubicacionActual, slot.rackIndex, slot.level, slot.slotIndex);
+    } finally {
+      pendConfirmando = false;
+    }
+
+    if (ok) {
+      cerrarModalPend();
+    } else {
+      const b2 = document.getElementById('pend-ok');
+      if (b2) { b2.disabled = false; b2.textContent = '✔ Confirmar y guardar'; }
+    }
+  }
+
   function zoomToSlotAndSpreadBoxes(slot, push) {
     if (push !== false) pushState();
     currentLevel = 2;
     activeSlot = slot;
+    enPendientes = false;
+    cerrarPanelPend();
     clearHover();
 
     backdropPlane.position.set(slot.position.x, slot.position.y + 0.1, 0.5);
@@ -781,6 +1170,7 @@
     );
 
     overlay.querySelectorAll('.box-summary-card, .slot-empty-card').forEach(c => c.remove());
+    cerrarModalPend();
 
     const card = document.createElement('div');
     card.className = 'box-summary-card';
@@ -943,7 +1333,8 @@
         <div class="box-item-list"><span style="color:#64748b;">Sin cajas en este slot</span></div>
         <div class="card-foot">
           <button class="btn-mini" onclick="Rack3D.crearCaja('${escJs(slot.rackIndex)}',${slot.level},${slot.slotIndex})">+ Crear caja aquí</button>
-        </div>`;
+        </div>
+        ${asignarHtml()}`;
       overlay.appendChild(empty);
       return;
     }
@@ -1009,7 +1400,7 @@
     // botón para agregar otra caja al slot
     const addCard = document.createElement('div');
     addCard.className = 'slot-tools active';
-    addCard.innerHTML = `<button class="btn-mini" onclick="Rack3D.crearCaja('${escJs(slot.rackIndex)}',${slot.level},${slot.slotIndex})">+ Nueva caja en ${esc(slot.id)}</button>`;
+    addCard.innerHTML = `<button class="btn-mini" onclick="Rack3D.crearCaja('${escJs(slot.rackIndex)}',${slot.level},${slot.slotIndex})">+ Nueva caja en ${esc(slot.id)}</button>${asignarHtml()}`;
     overlay.appendChild(addCard);
   }
 
@@ -1209,7 +1600,8 @@
         const p = String(i.pn || "");
         if (n.toLowerCase().includes(query) || p.toLowerCase().includes(query)) encontrados.add(n);
       });
-      if (String(b.id).toLowerCase().includes(query)) encontrados.add(b.id);
+      const idTxt = b.pendiente ? b.etiqueta : b.id;
+      if (String(idTxt).toLowerCase().includes(query)) encontrados.add(idTxt);
     });
 
     if (encontrados.size > 0) {
@@ -1218,7 +1610,7 @@
         const itemDiv = document.createElement('div');
         itemDiv.className = 'suggestion-item';
         const boxCount = allBoxes.filter(b =>
-          b.items.some(i => i.name === prod) || b.id === prod).length;
+          b.items.some(i => i.name === prod) || b.id === prod || (b.pendiente && b.etiqueta === prod)).length;
         itemDiv.innerHTML = `<span>${esc(prod)}</span> <small style="color:#38bdf8">${boxCount} caja(s)</small>`;
         itemDiv.onclick = () => {
           searchInput.value = prod;
@@ -1243,7 +1635,8 @@
   }
 
   function coincide(box, query) {
-    if (String(box.id).toLowerCase().includes(query)) return true;
+    const idTxt = box.pendiente ? box.etiqueta : box.id;   // la ubicación provisional de una caja pendiente no cuenta
+    if (String(idTxt).toLowerCase().includes(query)) return true;
     return box.items.some(i =>
       String(i.name || "").toLowerCase().includes(query) ||
       String(i.pn || "").toLowerCase().includes(query) ||
@@ -1363,6 +1756,8 @@
   ===================== */
   function limpiarTarjetas() {
     quitarGaleria();
+    cerrarModalPend();
+    cerrarPanelPend();
     if (overlay) overlay.querySelectorAll('.box-summary-card, .slot-tools, .slot-empty-card').forEach(c => c.remove());
     allBoxes.forEach(b => { b.cardElem = null; });
   }
@@ -1406,6 +1801,7 @@
     devolverCajasACasa(activeSlot);
     activeSlot = null;
     inspectedBox = null;
+    enPendientes = false;
     gsap.to(backdropMat, { opacity: 0, duration: 0.4 });
 
     currentLevel = state.level;
@@ -1436,12 +1832,14 @@
 
     navStack.length = 0;
     currentLevel = 0;
+    enPendientes = false;
     clearHover();
 
     const searchInput = document.getElementById('r3d-search');
     const activeQuery = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
-    animateCamera(new THREE.Vector3(6, 4.5, 7.5), new THREE.Vector3(1.5, 1.2, 0), silencioso ? 0.1 : 1.0, () => {
+    const vg = vistaGlobal || { pos: new THREE.Vector3(6, 4.5, 7.5), target: new THREE.Vector3(1.5, 1.2, 0) };
+    animateCamera(vg.pos.clone(), vg.target.clone(), silencioso ? 0.1 : 1.0, () => {
       if (activeQuery) startBlinkingAndPullFront(activeQuery);
       else stopBlinkingAndResetBoxes();
     });
@@ -1483,6 +1881,11 @@
   ===================== */
   function restaurarVista(v) {
     if (!v) return;
+
+    if (v.level === 'pend') {
+      if (pendZona) zoomToPendientes();
+      return;
+    }
 
     if (v.level === 1) {
       const rack = racksData.find(r => r.rackIndex === v.rack);
@@ -1531,8 +1934,29 @@
       const b = document.getElementById('r3d-back');
       if (b) b.disabled = true;
 
+      if (!v && !ajusteInicial && vistaGlobal) {
+        // primera vez: encuadrar los racks y el área de pendientes
+        camera.position.copy(vistaGlobal.pos);
+        controls.target.copy(vistaGlobal.target);
+        controls.update();
+      }
+      ajusteInicial = true;
+
       if (v) restaurarVista(v);
       else if (query) startBlinkingAndPullFront(query);
+
+      // si había una confirmación de acomodo abierta, se vuelve a mostrar (si la caja sigue pendiente)
+      if (pendModal && !pendConfirmando) {
+        const slotAbierto = (currentLevel === 2 && activeSlot && activeSlot.id === pendModal.slotId) ? activeSlot : null;
+        const info = (slotAbierto && typeof window.consultarCajaMigracion === "function")
+          ? window.consultarCajaMigracion(pendModal.caja) : null;
+        if (slotAbierto && info && info.estado === "pendiente") {
+          pendModal.ubicacionActual = info.ubicacionActual;
+          pintarModalPend(info, slotAbierto);
+        } else {
+          pendModal = null;
+        }
+      }
     },
 
     entrada,
@@ -1545,6 +1969,12 @@
     crearCaja,
     eliminarCaja: eliminarCajaProxy,
     abrirEntrada,
+    buscarPendiente,
+    confirmarPendiente,
+    cancelarPendiente,
+    cerrarPanelPend,
+    filtrarPend,
+    enfocarPendiente,
     clearSearch,
     goBack,
     resetToGlobal: function () { resetToGlobal(false); },

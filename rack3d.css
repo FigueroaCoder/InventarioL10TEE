@@ -657,3 +657,171 @@ body.r3d-fs-abierto{ overflow: hidden; }
   transform: none;
   will-change: auto;
 }
+
+/* ===========================================================
+   MATERIAL DE MIGRACIÓN — cajas pendientes de acomodar
+   =========================================================== */
+
+/* barra inferior del slot: ahora puede llevar también "acomodar caja pendiente" */
+.slot-tools{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 94%;
+}
+
+.pend-assign{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.slot-empty-card .pend-assign{
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+}
+.pend-num{
+  width: 150px;
+  background: #0b1220 !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(250,204,21,0.6) !important;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  outline: none;
+}
+.pend-num:focus{ background:#0b1220 !important; color:#ffffff !important; border-color:#facc15 !important; }
+.pend-num::placeholder{ color:#94a3b8; }
+.btn-pend{
+  background: rgba(250,204,21,0.14);
+  border-color: rgba(250,204,21,0.7);
+  color: #facc15;
+  white-space: nowrap;
+}
+.btn-pend:hover{ background:#facc15; color:#1c1917; }
+
+/* panel con la lista de pendientes (a la derecha del visor) */
+.pend-panel{
+  position: absolute;
+  top: 118px;
+  right: 14px;
+  bottom: 60px;
+  width: 300px;
+  max-width: calc(100% - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(15,23,42,0.95);
+  border: 1px solid rgba(250,204,21,0.55);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #ffffff;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  pointer-events: auto;
+  z-index: 35;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+}
+.pend-head{ display:flex; align-items:center; gap:8px; }
+.pend-head b{ font-size:0.82rem; color:#facc15; flex:1; }
+.pend-count{
+  background:#facc15; color:#1c1917; font-weight:800; font-size:0.72rem;
+  padding:1px 8px; border-radius:99px; text-shadow:none;
+}
+.pend-x{
+  background:transparent; border:1px solid rgba(255,255,255,0.25); color:#cbd5e1;
+  border-radius:4px; cursor:pointer; font-size:0.7rem; padding:2px 7px;
+}
+.pend-x:hover{ background:#ef4444; border-color:#ef4444; color:#fff; }
+.pend-hint{ font-size:0.66rem; color:#cbd5e1; line-height:1.35; }
+.pend-filter{
+  width:100%;
+  box-sizing:border-box;
+  background:#0b1220 !important;
+  color:#ffffff !important;
+  border:1px solid rgba(255,255,255,0.25) !important;
+  border-radius:6px;
+  padding:6px 9px;
+  font-size:0.74rem;
+  outline:none;
+}
+.pend-filter:focus{ background:#0b1220 !important; color:#ffffff !important; border-color:#facc15 !important; }
+.pend-filter::placeholder{ color:#94a3b8; }
+.pend-list{ flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding-right:2px; }
+.pend-row{
+  background: rgba(250,204,21,0.07);
+  border: 1px solid rgba(250,204,21,0.28);
+  border-radius: 7px;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.pend-row:hover{ background: rgba(250,204,21,0.16); }
+.pend-row-top{ display:flex; justify-content:space-between; font-size:0.76rem; }
+.pend-row-top b{ color:#facc15; }
+.pend-row-top span{ color:#e2e8f0; font-family:var(--font-mono, monospace); }
+.pend-mat{ font-size:0.66rem; color:#cbd5e1; margin-top:3px; line-height:1.35; word-break:break-word; }
+.pend-empty{ color:#94a3b8; font-size:0.78rem; text-align:center; padding:18px 6px; }
+
+/* ventana de confirmación del acomodo */
+.pend-modal{
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2,6,14,0.72);
+  pointer-events: auto;
+  z-index: 60;
+  padding: 14px;
+}
+.pend-dialog{
+  width: 380px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  background: #0f172a;
+  border: 1px solid rgba(250,204,21,0.7);
+  border-radius: 12px;
+  padding: 16px 18px;
+  color: #ffffff;
+  box-shadow: 0 14px 48px rgba(0,0,0,0.75);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+}
+.pend-dialog-title{ font-size:0.95rem; font-weight:800; color:#facc15; margin-bottom:10px; }
+.pend-dest{ font-size:0.9rem; line-height:1.5; }
+.pend-dest b{ color:#38bdf8; }
+.pend-dest small{ display:block; color:#94a3b8; font-size:0.7rem; margin-top:2px; }
+.pend-contents-title{ margin-top:12px; font-size:0.68rem; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; }
+.pend-contents{
+  margin-top:5px;
+  max-height:210px;
+  overflow-y:auto;
+  border:1px solid rgba(255,255,255,0.14);
+  border-radius:8px;
+  background: rgba(255,255,255,0.04);
+}
+.pend-crow{
+  display:flex; justify-content:space-between; gap:10px;
+  padding:6px 10px; font-size:0.78rem;
+  border-bottom:1px solid rgba(255,255,255,0.08);
+}
+.pend-crow:last-child{ border-bottom:none; }
+.pend-cname{ overflow:hidden; text-overflow:ellipsis; }
+.pend-cname small{ color:#94a3b8; }
+.pend-crow b{ white-space:nowrap; color:#4ade80; }
+.pend-vacia{ display:block; padding:10px; color:#94a3b8; font-size:0.78rem; }
+.pend-total{ margin-top:8px; font-size:0.74rem; color:#e2e8f0; }
+.pend-ask{ margin:12px 0 10px; font-size:0.82rem; font-weight:600; }
+.pend-actions{ display:flex; gap:8px; }
+.pend-actions .btn-mini{ font-size:0.78rem; padding:8px 12px; }
+.btn-pend-ok{
+  background:#16a34a; border-color:#16a34a; color:#fff;
+}
+.btn-pend-ok:hover{ background:#22c55e; color:#fff; }
+.btn-pend-ok:disabled{ opacity:.6; cursor:wait; }
+
+@media (max-width: 760px){
+  .pend-panel{ top: 170px; width: auto; left: 14px; }
+}
