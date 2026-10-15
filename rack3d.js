@@ -405,6 +405,7 @@
 
   function construir(racks, cajas) {
 
+    window.__rack3dCajasActuales = cajas || [];
     limpiarMundo();
 
     const activos = (racks || []).filter(r => r.status === "active");
@@ -645,10 +646,10 @@
 
     // --- TARIMAS DE ALMACENAMIENTO: 1 a la izquierda y 2–4 a la derecha ---
     const tarimaW = 1.05, tarimaD = 0.82;
-    construirTarima(1, -1.55, tarimaW, tarimaD);
-    construirTarima(2, cursorX + 0.35, tarimaW, tarimaD);
-    construirTarima(3, cursorX + 1.65, tarimaW, tarimaD);
-    construirTarima(4, cursorX + 2.95, tarimaW, tarimaD);
+    construirTarima(1, -1.55, tarimaW, tarimaD, cajas || []);
+    construirTarima(2, cursorX + 0.35, tarimaW, tarimaD, cajas || []);
+    construirTarima(3, cursorX + 1.65, tarimaW, tarimaD, cajas || []);
+    construirTarima(4, cursorX + 2.95, tarimaW, tarimaD, cajas || []);
 
     // --- MATERIAL PENDIENTE DE REGISTRO / ACOMODO, después de las tarimas ---
     const inicioPendientes = cursorX + 4.35;
@@ -662,7 +663,7 @@
     if (medPend) construirPendientes(pend, medPend, inicioPendientes);
   }
 
-  function construirTarima(numero, x0, w, d) {
+  function construirTarima(numero, x0, w, d, cajas) {
     const zCentro = 0.02;
     const geo = new THREE.BoxGeometry(w, 0.08, d);
     const base = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.78 }));
@@ -691,6 +692,50 @@
     sign.rotation.x = -Math.PI / 2;
     sign.position.set(x0 + w / 2, 0.006, zCentro + d / 2 + 0.22);
     worldGroup.add(sign);
+
+    const cajasTarima = (cajas || []).filter(c => c.rack === `TARIMA ${numero}` && !esPend(c));
+    // Representación visual sencilla de las cajas almacenadas en la tarima.
+    cajasTarima.slice(0, 12).forEach((c, i) => {
+      const t = tamanoDeCaja(c).dims;
+      const cols = 3;
+      const px = x0 + 0.19 + (i % cols) * 0.28;
+      const pz = zCentro - 0.2 + Math.floor(i / cols) * 0.22;
+      const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(Math.min(t.w, 0.22), Math.min(t.h, 0.22), Math.min(t.d, 0.22)), matBoxSide);
+      boxMesh.position.set(px, 0.08 + Math.floor(i / 6) * 0.23 + Math.min(t.h,0.22)/2, pz);
+      boxMesh.castShadow = true;
+      boxMesh.userData = { type: 'tarima', data: { numero } };
+      worldGroup.add(boxMesh);
+    });
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 1.1, d + 0.08), new THREE.MeshBasicMaterial({ visible: false }));
+    hit.position.set(x0 + w / 2, 0.55, zCentro);
+    hit.userData = { type: 'tarima', data: { numero } };
+    worldGroup.add(hit);
+    raycastTargets.push(hit);
+  }
+
+  function abrirTarima(numero) {
+    if (!overlay) return;
+    overlay.querySelectorAll('.tarima-panel').forEach(e => e.remove());
+    const n = Number(numero);
+    const cajas = (window.__rack3dCajasActuales || []).filter(c => c.rack === `TARIMA ${n}` && !esPend(c))
+      .sort((a,b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, {numeric:true}));
+    const panel = document.createElement('div');
+    panel.className = 'tarima-panel';
+    const cards = cajas.map(c => {
+      const box = {
+        id: c.ubicacion, etiqueta: String(c.caja || c.ubicacion), slotCode: `TARIMA ${n}`,
+        estado: estadoDeCaja(c).key, tamano: tamanoDeCaja(c).key,
+        items: (c.componentes || []).map(x => ({name:x.nombre, pn:x.pn, qty:Number(x.cantidad)||0, categoria:x.categoria||''}))
+      };
+      return `<div class="tarima-caja"><div class="box-summary-card tarima-card">${cardHtml(box)}</div></div>`;
+    }).join('');
+    panel.innerHTML = `<div class="tarima-head"><div><b>📦 TARIMA ${n}</b><div>${cajas.length} caja(s) registrada(s)</div></div><button class="pend-x" onclick="Rack3D.cerrarTarima()" title="Cerrar">✕</button></div><div class="tarima-actions"><button class="btn-mini" onclick="Rack3D.crearCajaTarima(${n})">+ Crear caja en tarima ${n}</button></div><div class="tarima-cajas">${cards || '<p class="tarima-vacia">Esta tarima está vacía. Crea una caja para comenzar a registrar material.</p>'}</div>`;
+    overlay.appendChild(panel);
+  }
+
+  function cerrarTarima() { if (overlay) overlay.querySelectorAll('.tarima-panel').forEach(e => e.remove()); }
+  async function crearCajaTarima(numero) {
+    if (typeof window.crearCajaEnTarima === 'function') await window.crearCajaEnTarima(numero);
   }
 
   function construirPendientes(pend, med, x0) {
@@ -835,7 +880,7 @@
           hit = intersects.find(i => (i.object.userData.type === 'box' || i.object.userData.type === 'pbox') && i.object.userData.data.dashLine.visible)?.object;
         }
         // lo más cercano entre un rack y el área de pendientes
-        if (!hit) hit = intersects.find(i => ['rack', 'pzone'].includes(i.object.userData.type))?.object;
+        if (!hit) hit = intersects.find(i => ['rack', 'pzone', 'tarima'].includes(i.object.userData.type))?.object;
       } else if (currentLevel === 1 && enPendientes) {
         hit = intersects.find(i => i.object.userData.type === 'pbox')?.object;
       } else if (currentLevel === 1) {
@@ -898,6 +943,7 @@
     const data = hoveredObject.userData.data;
 
     if (type === 'box') inspectSingleBox(data);
+    else if (type === 'tarima') abrirTarima(data.numero);
     else if (type === 'pzone') zoomToPendientes();
     else if (type === 'pbox') { if (!enPendientes) zoomToPendientes(); abrirPanelPend(data.etiqueta); enfocarPendiente(data.etiqueta); }
     else if (currentLevel === 0 && type === 'rack') zoomToRack(data);
@@ -2007,6 +2053,9 @@
     crearCaja,
     eliminarCaja: eliminarCajaProxy,
     abrirEntrada,
+    abrirTarima,
+    cerrarTarima,
+    crearCajaTarima,
     buscarPendiente,
     confirmarPendiente,
     cancelarPendiente,

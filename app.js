@@ -878,6 +878,36 @@ window.eliminarRack = async function(nombre){
 CAJAS DENTRO DE UN SLOT (número manual)
 ===================== */
 
+window.crearCajaEnTarima = async function(numeroTarima){
+  await loadCajas(true);
+  const rack = `TARIMA ${Number(numeroTarima)}`;
+  const sugerido = siguienteNumeroCaja();
+  const entrada = prompt(`Número o etiqueta de la nueva caja para ${rack}:`, sugerido);
+  if(entrada === null) return null;
+  const cajaId = normCaja(entrada);
+  if(!cajaId){ alert("Número de caja inválido"); return null; }
+  if(cajaNumeroDuplicado(cajaId)){
+    alert(`Ya existe una caja "${cajaId}" en el almacén. Cada número de caja solo puede existir una vez.`);
+    return null;
+  }
+  const ubicacion = `TARIMA-${Number(numeroTarima)}-01-01-${cajaId}`;
+  try{
+    const cajaRef = doc(db,"cajas",ubicacion);
+    const cajaSnap = await getDoc(cajaRef);
+    if(cajaSnap.exists()){ alert("Ya existe una caja con esa ubicación"); return null; }
+    await setDoc(cajaRef, {
+      rack, nivel: 1, slot: 1, caja: cajaId, ubicacion,
+      componentes: [], migracion: false, tarima: Number(numeroTarima)
+    });
+    await loadCajas(true);
+    if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+    if(window.Rack3D && typeof window.Rack3D.abrirTarima === "function") window.Rack3D.abrirTarima(Number(numeroTarima));
+    return ubicacion;
+  }catch(e){
+    console.error(e); alert("Error creando caja en la tarima"); return null;
+  }
+};
+
 window.crearCajaEnSlot = async function(rack, nivel, slot, opts){
 
   await loadCajas(true);
@@ -2018,8 +2048,10 @@ ${isAdmin() ? `<button class="slot-add slot-del" title="Eliminar caja" onclick="
     const infoCajas = document.getElementById("contadorCajas3D");
     if(infoCajas){
       const pendientes = cacheCajas.filter(esCajaPendiente);
-      const cajasEnRacks = cacheCajas.filter(c => !esCajaPendiente(c) && activos.some(r => r.nombre === c.rack));
-      const cajasDelArea = cajasEnRacks.concat(pendientes);   // el material pendiente también está físicamente en el área
+      const cajasEnRacks = cacheCajas.filter(c => !esCajaPendiente(c) && (
+        activos.some(r => r.nombre === c.rack) || /^TARIMA [1-4]$/.test(String(c.rack || ""))
+      ));
+      const cajasDelArea = cajasEnRacks.concat(pendientes);   // incluye racks, tarimas y material pendiente
       const totalCajas = cajasEnRacks.length;
 
       const materialesArea = new Set();
