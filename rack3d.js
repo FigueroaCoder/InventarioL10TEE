@@ -415,10 +415,12 @@
     const medPend = medidasZonaPend(pend.length);
 
     // --- piso y pared ---
+    const anchoRack = activos.reduce((acc, r) => acc + (Number(r.slots) || 1) * SLOT_W + GAP_RACKS, 0);
+    // Espacio fijo para Tarima 1 a la izquierda y Tarimas 2, 3 y 4 a la derecha.
+    const anchoTarimas = 2.2 + 3 * 1.45 + 1.2;
     const anchoTotal = Math.max(
-      12,
-      activos.reduce((acc, r) => acc + (Number(r.slots) || 1) * SLOT_W + GAP_RACKS, 0) + 6
-        + (medPend ? medPend.w + 1.5 : 0)
+      16,
+      anchoRack + anchoTarimas + (medPend ? medPend.w + 1.5 : 0)
     );
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(anchoTotal + 10, 25), matFloor);
@@ -641,18 +643,54 @@
       cursorX += shelfWidth + GAP_RACKS;
     });
 
-    // --- ÁREA DE PENDIENTES (a un lado de los racks) ---
-    vistaGlobal = { pos: new THREE.Vector3(6, 4.5, 7.5), target: new THREE.Vector3(1.5, 1.2, 0) };
-    if (medPend) {
-      construirPendientes(pend, medPend, cursorX + 0.7);
-      const finX = pendZona.x0 + pendZona.w;
-      const cx = Math.max(1.5, finX / 2);
-      const f = Math.max(1, finX / 6);
-      vistaGlobal = {
-        target: new THREE.Vector3(cx, 1.2, 0),
-        pos: new THREE.Vector3(cx + 4.5 * f, 1.2 + 3.3 * f, 7.5 * f)
-      };
+    // --- TARIMAS DE ALMACENAMIENTO: 1 a la izquierda y 2–4 a la derecha ---
+    const tarimaW = 1.05, tarimaD = 0.82;
+    construirTarima(1, -1.55, tarimaW, tarimaD);
+    construirTarima(2, cursorX + 0.35, tarimaW, tarimaD);
+    construirTarima(3, cursorX + 1.65, tarimaW, tarimaD);
+    construirTarima(4, cursorX + 2.95, tarimaW, tarimaD);
+
+    // --- MATERIAL PENDIENTE DE REGISTRO / ACOMODO, después de las tarimas ---
+    const inicioPendientes = cursorX + 4.35;
+    const finLayout = inicioPendientes + (medPend ? medPend.w : 0);
+    const centroLayout = Math.max(1.2, (finLayout - 1.55) / 2);
+    const escalaVista = Math.max(1, finLayout / 7);
+    vistaGlobal = {
+      target: new THREE.Vector3(centroLayout, 1.0, 0),
+      pos: new THREE.Vector3(centroLayout + 4.6 * escalaVista, 3.2 * escalaVista, 8.5 * escalaVista)
+    };
+    if (medPend) construirPendientes(pend, medPend, inicioPendientes);
+  }
+
+  function construirTarima(numero, x0, w, d) {
+    const zCentro = 0.02;
+    const geo = new THREE.BoxGeometry(w, 0.08, d);
+    const base = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.78 }));
+    base.position.set(x0 + w / 2, 0.04, zCentro);
+    base.receiveShadow = true;
+    base.castShadow = true;
+    worldGroup.add(base);
+
+    // Tablas visibles para distinguir la tarima en la vista frontal.
+    for (let i = 1; i <= 3; i++) {
+      const tabla = new THREE.Mesh(
+        new THREE.BoxGeometry(0.045, 0.085, d + 0.015),
+        new THREE.MeshStandardMaterial({ color: 0xb77945, roughness: 0.82 })
+      );
+      tabla.position.set(x0 + (w * i / 4), 0.045, zCentro);
+      worldGroup.add(tabla);
     }
+    const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xfacc15 }));
+    edge.position.copy(base.position);
+    worldGroup.add(edge);
+
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(w * 1.12, 0.28),
+      new THREE.MeshBasicMaterial({ map: createFloorLabelTexture(`TARIMA ${numero}`), transparent: true })
+    );
+    sign.rotation.x = -Math.PI / 2;
+    sign.position.set(x0 + w / 2, 0.006, zCentro + d / 2 + 0.22);
+    worldGroup.add(sign);
   }
 
   function construirPendientes(pend, med, x0) {

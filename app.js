@@ -1890,6 +1890,21 @@ window.renderRacksPage = async function(){
   if(!tablaRacks) return;
 
   await loadRacks();
+
+  // Esta configuración conserva todas las cajas y su contenido; solo ajusta
+  // el estado de los racks para dejar A como único rack activo.
+  if (isAdmin() && cacheRacks.some(r => r.nombre === "A")) {
+    let cambioEstado = false;
+    for (const rack of cacheRacks) {
+      const estadoDeseado = rack.nombre === "A" ? "active" : "inactive";
+      if (rack.status !== estadoDeseado) {
+        await updateDoc(doc(db, "racks", rack.nombre), { status: estadoDeseado });
+        cambioEstado = true;
+      }
+    }
+    if (cambioEstado) await loadRacks(true);
+  }
+
   await loadCajas();
 
   if(contadorRacks) contadorRacks.innerText = cacheRacks.length;
