@@ -471,3 +471,7 @@ En **Movimientos → Material a Tool Crib**:
 - **Solo cajas:** busca por número o ubicación (`CAJA 20`, `A-01-01-02`); con el campo vacío al hacer clic se listan **todas las cajas** para elegir.
 - **Solo material:** busca únicamente por nombre o PN (no se mezclan resultados de cajas).
 - Archivos: `movimientos.html`, `app.js`.
+
+## Update: Rack B habilitado
+- Racks activos: **A y B** (`RACKS_ACTIVOS_FIJOS` en `app.js`). Rack A sigue mostrando todo lo registrado; en el rack B se ven las cajas **registradas o acomodadas** (nuevas) en su posición, y el material viejo de migración sin acomodar sigue en pendientes. No se borró ni se modificó ningún dato: las cajas del rack B solo estaban ocultas por la configuración.
+- En el 3D el orden de frente queda: Tarima 1, rack A, rack B, Tarimas 2, 3 y 4, y al final pendientes.

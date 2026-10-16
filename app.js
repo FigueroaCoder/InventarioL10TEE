@@ -117,7 +117,11 @@ Cada tarima funciona como una ubicación de 1 nivel y 1 slot, así que se
 registra, guarda y consulta igual que cualquier slot (ubicación T1-01-01-05).
 No hay que crear nada en Firestore: las tarimas se agregan aquí en código.
 ===================== */
-const RACKS_ACTIVOS_FIJOS = ["A"];
+const RACKS_ACTIVOS_FIJOS = ["A","B"];
+/* racks donde TODO lo registrado se ve en su posición (rack A). En los demás racks activos
+   (rack B) las cajas viejas de migración siguen pendientes de acomodar y las cajas
+   registradas/acomodadas después sí se ven dentro del rack. */
+const RACKS_TODO_REGISTRADO = ["A"];
 const TARIMAS_ALMACEN = ["T1","T2","T3","T4"];
 
 function esRackTarima(nombre){
@@ -164,11 +168,13 @@ se muestran aparte (a un lado de los racks) como "pendientes de acomodar".
 ===================== */
 function esCajaPendiente(c){
   if(!c) return false;
-  /* El rack A y las tarimas son las únicas ubicaciones activas: todo lo que
-     está registrado ahí se considera ya acomodado (no es pendiente). */
-  if(esRackActivoFijo(c.rack)) return false;
-  /* Todo lo demás (material de otros racks, de migración, etc.) queda como
-     pendiente de registro hasta que se acomode en el rack A o en una tarima. */
+  const r = String(c.rack ?? "").toUpperCase();
+  /* rack A y tarimas: todo lo registrado ahí está ya acomodado */
+  if(RACKS_TODO_REGISTRADO.includes(r) || TARIMAS_ALMACEN.includes(r)) return false;
+  /* rack B: solo es pendiente el material viejo de migración sin acomodar;
+     las cajas nuevas (migracion:false) o ya acomodadas se ven en el rack */
+  if(RACKS_ACTIVOS_FIJOS.includes(r)) return c.migracion !== false && c.acomodada !== true;
+  /* racks inactivos: su material queda como pendiente de registro */
   return true;
 }
 window.esCajaPendiente = esCajaPendiente;
@@ -885,7 +891,7 @@ window.toggleRackStatus = async function(nombre){
     if(rack.tarima || rack.fijoInactivo){
       alert(rack.tarima
         ? "Las tarimas están siempre activas."
-        : "Por ahora solo el rack A está activo en el almacén.");
+        : "Los racks activos del almacén están fijos (A y B).");
       return;
     }
 
