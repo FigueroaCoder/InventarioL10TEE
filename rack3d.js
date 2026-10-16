@@ -423,7 +423,8 @@
      cajas de migración en rejilla (y apiladas si son muchas). */
   const PEND_COLS = 6, PEND_CELL_W = 0.25, PEND_CELL_D = 0.27, PEND_MAX_ROWS = 5;
   function medidasZonaPend(n) {
-    if (n <= 0) return null;
+    // la zona de pendientes siempre existe (aunque tenga 0 cajas, con un tamaño mínimo)
+    n = Math.max(n, 3);
     const cols = Math.min(PEND_COLS, n);
     const rowsCapa = Math.min(PEND_MAX_ROWS, Math.ceil(n / cols));
     return { cols, rowsCapa, porCapa: cols * rowsCapa, w: cols * PEND_CELL_W + 0.2, d: rowsCapa * PEND_CELL_D + 0.2 };

@@ -494,7 +494,11 @@ En **Movimientos → Material a Tool Crib**:
   - *Material suelto o sin caja:* entra a una caja del rack B (la primera; si no hay ninguna se crea una en `B-01-01`).
 - **Regresar de Tool Crib** y **enviar a Scrap desde Tool Crib** descuentan primero de las cajas del rack B y, si falta, del registro anterior.
 - Las cajas del rack B ya no salen como opción para enviar a Tool Crib (ya están ahí).
-- El material viejo de migración que estaba en el rack B ya no cuenta como "pendiente de acomodar": se ve en el rack B y cuenta como Tool Crib.
+- Las cajas de migración pendientes de acomodar (incluidas las del rack B) siguen en el área de **Pendientes**; cuando se acomodan en el rack B pasan a contar como Tool Crib.
 
 ### Inventario: filtro "Ver"
 - Selector arriba del buscador: **Todo**, **Material del pasillo** (todo menos el rack B) y **Material en Tool Crib** (rack B). Funciona junto con el buscador y se actualiza en tiempo real.
+
+### Pendientes de acomodar: siempre visibles en el 3D
+- El área de **Pendientes de acomodar** (tarima con letrero, a la derecha de las tarimas) vuelve a mostrarse con todas las cajas que tenga, y **aparece aunque tenga 0 cajas** (tarima vacía con el letrero "0 CAJAS").
+- Archivos: `rack3d.js`, `app.js`.

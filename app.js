@@ -138,6 +138,12 @@ function esRackToolCrib(nombre){
   return String(nombre ?? "").toUpperCase() === RACK_TOOLCRIB;
 }
 window.esRackToolCrib = esRackToolCrib;
+/* una caja cuenta como Tool Crib si está en el rack B y ya está acomodada
+   (las cajas de migración pendientes todavía no están en el rack) */
+function esEnToolCrib(c){
+  return !!c && esRackToolCrib(c.rack) && !esCajaPendiente(c);
+}
+window.esEnToolCrib = esEnToolCrib;
 
 function esRackTarima(nombre){
   return TARIMAS_ALMACEN.includes(String(nombre ?? "").toUpperCase());
@@ -186,7 +192,7 @@ function esCajaPendiente(c){
   if(!c) return false;
   const r = String(c.rack ?? "").toUpperCase();
   /* rack A y tarimas: todo lo registrado ahí está ya acomodado */
-  if(RACKS_TODO_REGISTRADO.includes(r) || TARIMAS_ALMACEN.includes(r) || r === RACK_TOOLCRIB) return false;
+  if(RACKS_TODO_REGISTRADO.includes(r) || TARIMAS_ALMACEN.includes(r)) return false;
   /* rack B: solo es pendiente el material viejo de migración sin acomodar;
      las cajas nuevas (migracion:false) o ya acomodadas se ven en el rack */
   if(RACKS_ACTIVOS_FIJOS.includes(r)) return c.migracion !== false && c.acomodada !== true;
@@ -376,8 +382,8 @@ function agruparInventario(){
   const filtro = window.filtroInventario;
 
   cacheCajas.forEach(c => {
-    if(filtro === "toolcrib" && !esRackToolCrib(c.rack)) return;
-    if(filtro === "pasillo" && esRackToolCrib(c.rack)) return;
+    if(filtro === "toolcrib" && !esEnToolCrib(c)) return;
+    if(filtro === "pasillo" && esEnToolCrib(c)) return;
     (c.componentes || []).forEach(comp => {
 
       const clave = invClave(comp.nombre);
@@ -2514,7 +2520,7 @@ function claveMaterial(nombre){
 let cacheToolCribLegacy = [];
 
 function cajasToolCrib(){
-  return cacheCajas.filter(c => esRackToolCrib(c.rack));
+  return cacheCajas.filter(c => esEnToolCrib(c));
 }
 
 function recomponerToolCrib(){
@@ -2722,7 +2728,7 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
     const origenRef = doc(db,"cajas",ubicacionOrigen);
     const origenSnap = await getDoc(origenRef);
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
-    if(esRackToolCrib(origenSnap.data().rack)){ alert("Ese material ya está en Tool Crib (rack B)"); return false; }
+    if(esEnToolCrib(origenSnap.data())){ alert("Ese material ya está en Tool Crib (rack B)"); return false; }
 
     let componentes = origenSnap.data().componentes || [];
     const idx = componentes.findIndex(c => String(c.nombre).toLowerCase() === nombreMaterial.toLowerCase());
@@ -2814,7 +2820,7 @@ window.buscarCajasToolCrib = async function(query, listarTodas){
   const numCaja = parseConsultaCaja(query);   // "CAJA 20" → solo la caja 20
 
   return cacheCajas
-    .filter(c => !esRackToolCrib(c.rack))   // lo del rack B ya está en Tool Crib
+    .filter(c => !esEnToolCrib(c))   // lo del rack B ya está en Tool Crib
     .filter(c => !query ? true : numCaja !== null
       ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
       : (String(c.ubicacion || "").toLowerCase().includes(query) ||
@@ -2887,7 +2893,7 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
 
     const dataOrigen = origenSnap.data();
-    if(esRackToolCrib(dataOrigen.rack)){ alert("Esa caja ya está en Tool Crib (rack B)"); return false; }
+    if(esEnToolCrib(dataOrigen)){ alert("Esa caja ya está en Tool Crib (rack B)"); return false; }
     const compsOrigen = dataOrigen.componentes || [];
 
     const pedido = new Map();
