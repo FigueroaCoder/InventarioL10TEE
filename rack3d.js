@@ -296,7 +296,7 @@
     sun.shadow.mapSize.set(1024, 1024);
     scene.add(sun);
 
-    // luz desde atrás de la barda para que el Tool Crib (rack 2) se vea bien al girar
+    // luz desde atrás de la barda para que el Tool Crib (rack B) se vea bien al girar
     const sunTrasero = new THREE.DirectionalLight(0xffffff, 0.8);
     sunTrasero.position.set(2, 10, -10);
     scene.add(sunTrasero);
@@ -499,7 +499,7 @@
     }
 
     /* Construye un rack. zc = centro del rack en Z; dir = +1 mira hacia el frente del
-       almacén, -1 mira hacia atrás (rack 2 / Tool Crib, detrás de la barda). */
+       almacén, -1 mira hacia atrás (rack B / Tool Crib, detrás de la barda). */
     const construirRackFisico = (rack, rackX, zc, dir) => {
 
       const nNiveles = Math.max(1, parseInt(rack.niveles) || 1);
@@ -514,7 +514,7 @@
         niveles: nNiveles,
         slots: nSlots,
         position: new THREE.Vector3(rackX + shelfWidth / 2, alturaRack / 2, zc),
-        zc, dir
+        zc, dir, toolcrib: esTC
       };
 
       ponerParal(rackX, alturaRack, zc);
@@ -529,7 +529,7 @@
       labelMesh.position.set(rackX + shelfWidth / 2, 0.005, zc + dir * 0.85);
       worldGroup.add(labelMesh);
 
-      // letrero grande "TOOL CRIB" sobre el rack 2, pegado a la barda (se lee desde atrás)
+      // letrero grande "TOOL CRIB" sobre el rack B, pegado a la barda (se lee desde atrás)
       if (esTC) {
         const anchoLetrero = Math.max(2.4, shelfWidth);
         const letrero = new THREE.Mesh(
@@ -1170,7 +1170,7 @@
 
     animateCamera(new THREE.Vector3(rack.position.x, camY, rZc + rDir * camDist), new THREE.Vector3(rack.position.x, camY, rZc));
 
-    hud(String(rack.rackIndex) === "2" ? "Tool Crib · Rack 2" : `Rack ${rack.rackIndex}`, "Viendo los niveles completos. Selecciona un slot.", `RACK ${rack.rackIndex}`);
+    hud(rack.toolcrib ? `Tool Crib · Rack ${rack.rackIndex}` : `Rack ${rack.rackIndex}`, "Viendo los niveles completos. Selecciona un slot.", `RACK ${rack.rackIndex}`);
     vistaGuardada = { level: 1, rack: rack.rackIndex };
   }
 

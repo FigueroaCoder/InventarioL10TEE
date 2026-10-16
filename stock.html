@@ -50,6 +50,15 @@ body.loaded{ opacity:1; }
 <button id="btnExport">📊 Exportar a Excel</button>
 </div>
 
+<div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+<label for="filtroInv" style="font-weight:600;">Ver:</label>
+<select id="filtroInv" onchange="cambiarFiltroInventario(this.value)" style="padding:8px 12px;">
+<option value="todo">Todo</option>
+<option value="pasillo">Material del pasillo (todo menos rack B)</option>
+<option value="toolcrib">Material en Tool Crib (rack B)</option>
+</select>
+</div>
+
 <input class="buscador" id="valor" 
 placeholder="Buscar por número de caja (ej. A-01-01) o por componente..."
 onkeyup="liveSearch()"

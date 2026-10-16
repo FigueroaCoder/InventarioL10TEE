@@ -478,20 +478,23 @@ En **Movimientos → Material a Tool Crib**:
 
 ---
 
-## Update: Tool Crib = Rack 2 (detrás de la barda)
+## Update: Tool Crib = Rack B (detrás de la barda) + filtro del Inventario
 
-**Archivos modificados:** `app.js`, `rack3d.js`, `CAMBIOS.md` (sin cambios en Firestore ni en reglas).
+**Archivos modificados:** `app.js`, `rack3d.js`, `stock.html`, `CAMBIOS.md` (sin cambios en Firestore ni en reglas).
 
 ### En el 3D
-- Al girar la cámara **detrás de la barda** se ve el mismo tipo de barda (lámina con costillas) por el otro lado y, pegado a ella, el **Rack 2** con un letrero grande que dice **TOOL CRIB** (y la etiqueta en el piso).
-- El Rack 2 funciona como cualquier rack: clic en el rack → clic en un slot → ver/inspeccionar cajas. La cámara, la galería y la búsqueda ("CAJA 20", material) ya trabajan del lado de atrás. Se agregó una luz trasera para que se vea bien.
-- El Rack 2 es virtual (se define en `app.js`: `RACK_TOOLCRIB = "2"`, `TOOLCRIB_NIVELES = 3`, `TOOLCRIB_SLOTS = 4`); no hay que crear nada en Firestore. En los selectores aparece como **Tool Crib (Rack 2)**.
+- El **rack B** pasa a estar **detrás de la barda**: al girar la cámara se ve el mismo tipo de barda (lámina con costillas) por el otro lado y, pegado a ella, el rack B con un letrero grande **TOOL CRIB** (y la etiqueta en el piso). El rack A queda al frente como siempre.
+- El rack B funciona como cualquier rack: clic en el rack → clic en un slot → ver/inspeccionar cajas. La cámara, la galería y la búsqueda ya trabajan del lado de atrás. Se agregó una luz trasera.
+- Se define en `app.js` con `RACK_TOOLCRIB = "B"`. En los selectores aparece como **Tool Crib (Rack B)**.
 
-### Tool Crib y Rack 2 son lo mismo
-- **Todo lo que está en el Rack 2** (lo que ya estuviera registrado ahí, lo que se registre en Entrada o lo que se mueva con *Mover cajas / material*) **aparece solo en la tabla "Material en Tool Crib"**, sumado por material. Lo que ya estaba en la tabla anterior de Tool Crib se conserva y se suma.
-- **Todo lo que se envía a Tool Crib se guarda en el Rack 2**:
-  - *Caja completa / con caja:* la caja se mueve al Rack 2 (al slot con menos cajas) con el material enviado, conservando su número.
-  - *Material suelto o sin caja:* entra a una caja del Rack 2 (la primera; si no hay ninguna se crea una en `2-01-01`).
-- **Regresar de Tool Crib** y **enviar a Scrap desde Tool Crib** descuentan primero de las cajas del Rack 2 y, si falta, del registro anterior.
-- Las cajas del Rack 2 ya no aparecen como opción para enviar a Tool Crib (ya están ahí).
-- El Rack 2 no cuenta como "pendiente de acomodar".
+### Tool Crib y rack B son lo mismo
+- **Todo lo que está en el rack B** (lo que ya estaba, lo que se registre en Entrada o lo que se mueva ahí) **aparece solo en la tabla "Material en Tool Crib"**, sumado por material. Lo que ya estaba en la tabla anterior de Tool Crib se conserva y se suma.
+- **Todo lo que se envía a Tool Crib se guarda en el rack B**:
+  - *Caja completa / con caja:* la caja se mueve al rack B (al slot con menos cajas) con el material enviado, conservando su número.
+  - *Material suelto o sin caja:* entra a una caja del rack B (la primera; si no hay ninguna se crea una en `B-01-01`).
+- **Regresar de Tool Crib** y **enviar a Scrap desde Tool Crib** descuentan primero de las cajas del rack B y, si falta, del registro anterior.
+- Las cajas del rack B ya no salen como opción para enviar a Tool Crib (ya están ahí).
+- El material viejo de migración que estaba en el rack B ya no cuenta como "pendiente de acomodar": se ve en el rack B y cuenta como Tool Crib.
+
+### Inventario: filtro "Ver"
+- Selector arriba del buscador: **Todo**, **Material del pasillo** (todo menos el rack B) y **Material en Tool Crib** (rack B). Funciona junto con el buscador y se actualiza en tiempo real.

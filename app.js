@@ -127,16 +127,13 @@ const TARIMAS_ALMACEN = ["T1","T2","T3","T4"];
 /* =====================
 RACK 2 = TOOL CRIB
 -------------------------------------------------------
-El Tool Crib es el rack 2: está detrás de la barda (se ve al girar el 3D)
-con un letrero que dice TOOL CRIB. Es un rack virtual (se define aquí, no
-hay que crear nada en Firestore):
-  - Todo lo que se envía a Tool Crib se guarda en el rack 2.
-  - Todo lo que hay en el rack 2 (o se mueva / registre ahí) cuenta
+El Tool Crib es el rack B: está detrás de la barda (se ve al girar el 3D)
+con un letrero que dice TOOL CRIB. Es el rack B que ya existe (solo hay A y B):
+  - Todo lo que se envía a Tool Crib se guarda en el rack B.
+  - Todo lo que hay en el rack B (o se mueva / registre ahí) cuenta
     automáticamente como material en Tool Crib.
 ===================== */
-const RACK_TOOLCRIB = "2";
-const TOOLCRIB_NIVELES = 3;
-const TOOLCRIB_SLOTS = 4;
+const RACK_TOOLCRIB = "B";
 function esRackToolCrib(nombre){
   return String(nombre ?? "").toUpperCase() === RACK_TOOLCRIB;
 }
@@ -152,7 +149,7 @@ function esRackActivoFijo(nombre){
 /* nombre para mostrar: "Tarima 1" / "Rack A" */
 function nombreRack(nombre){
   const n = String(nombre ?? "").toUpperCase();
-  if(n === RACK_TOOLCRIB) return "Tool Crib (Rack 2)";
+  if(n === RACK_TOOLCRIB) return "Tool Crib (Rack " + RACK_TOOLCRIB + ")";
   return esRackTarima(n) ? "Tarima " + n.slice(1) : "Rack " + nombre;
 }
 window.esRackTarima = esRackTarima;
@@ -162,18 +159,14 @@ window.nombreRack = nombreRack;
    solo el rack A queda activo y se agregan las tarimas (virtuales). */
 function aplicarConfigRacks(lista){
   const reales = (lista || [])
-    .filter(r => !esRackTarima(r.nombre) && !esRackToolCrib(r.nombre))
+    .filter(r => !esRackTarima(r.nombre))
     .map(r => RACKS_ACTIVOS_FIJOS.includes(String(r.nombre).toUpperCase())
-      ? { ...r, status:"active" }
+      ? { ...r, status:"active", ...(esRackToolCrib(r.nombre) ? { toolcrib:true } : {}) }
       : { ...r, status:"inactive", fijoInactivo:true });
   const tarimas = TARIMAS_ALMACEN.map(t => ({
     idDoc: t, nombre: t, niveles: 1, slots: 1, status: "active", tarima: true
   }));
-  const toolcrib = [{
-    idDoc: RACK_TOOLCRIB, nombre: RACK_TOOLCRIB, niveles: TOOLCRIB_NIVELES, slots: TOOLCRIB_SLOTS,
-    status: "active", toolcrib: true
-  }];
-  return reales.concat(tarimas, toolcrib).sort((a,b) => String(a.nombre).localeCompare(String(b.nombre), undefined, {numeric:true}));
+  return reales.concat(tarimas).sort((a,b) => String(a.nombre).localeCompare(String(b.nombre), undefined, {numeric:true}));
 }
 
 /* =====================
@@ -374,11 +367,17 @@ function invJsq(t){
   return String(t ?? "").replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;");
 }
 
+/* filtro del Inventario: "todo" | "pasillo" (todo menos el rack B) | "toolcrib" (rack B) */
+window.filtroInventario = window.filtroInventario || "todo";
+
 function agruparInventario(){
 
   const grupos = new Map();
+  const filtro = window.filtroInventario;
 
   cacheCajas.forEach(c => {
+    if(filtro === "toolcrib" && !esRackToolCrib(c.rack)) return;
+    if(filtro === "pasillo" && esRackToolCrib(c.rack)) return;
     (c.componentes || []).forEach(comp => {
 
       const clave = invClave(comp.nombre);
@@ -478,6 +477,13 @@ window.showStock = async function(force){
 /* =====================
 BUSCADOR INVENTARIO (por caja o componente)
 ===================== */
+
+window.cambiarFiltroInventario = async function(valor){
+  window.filtroInventario = ["pasillo","toolcrib"].includes(valor) ? valor : "todo";
+  await window.showStock(false);
+  const b = document.getElementById("valor");
+  if(b && b.value && typeof window.liveSearch === "function") window.liveSearch();
+};
 
 window.liveSearch = function(){
 
@@ -914,7 +920,7 @@ window.toggleRackStatus = async function(nombre){
 
     if(rack.tarima || rack.toolcrib || rack.fijoInactivo){
       alert(rack.toolcrib
-        ? "El rack 2 (Tool Crib) está siempre activo."
+        ? "El Tool Crib (rack " + RACK_TOOLCRIB + ") está siempre activo."
         : rack.tarima
         ? "Las tarimas están siempre activas."
         : "Los racks activos del almacén están fijos (A y B).");
@@ -2503,7 +2509,7 @@ function claveMaterial(nombre){
 }
 
 /* Tool Crib = lo que hay en las cajas del RACK 2 (automático) + los materiales
-   que ya estaban registrados en la colección "toolcrib" (antes del rack 2).
+   que ya estaban registrados en la colección "toolcrib" (antes del rack B).
    Los dos se suman por material. */
 let cacheToolCribLegacy = [];
 
@@ -2609,7 +2615,7 @@ async function intentarLiberarCaja(ubicacion){
 
 /* ---------- helpers del RACK 2 (Tool Crib) ---------- */
 
-/* Caja del rack 2 donde cae el material suelto (sin caja). Si el rack 2 está
+/* Caja del rack B donde cae el material suelto (sin caja). Si el rack B está
    vacío se crea una caja nueva en 2-01-01. */
 async function cajaSueltaToolCrib(){
   await loadCajas(true);
@@ -2626,13 +2632,16 @@ async function cajaSueltaToolCrib(){
   return ubic;
 }
 
-/* Slot del rack 2 con menos cajas (para las cajas que llegan completas) */
+/* Slot del rack B con menos cajas (para las cajas que llegan completas) */
 function slotToolCribLibre(){
   const cuenta = {};
   cajasToolCrib().forEach(c => { const k = c.nivel + "-" + c.slot; cuenta[k] = (cuenta[k] || 0) + 1; });
+  const rk = cacheRacks.find(r => esRackToolCrib(r.nombre));
+  const nN = parseInt(rk && rk.niveles) || 1;
+  const nS = parseInt(rk && rk.slots) || 1;
   let mejor = { nivel:1, slot:1, n: Infinity };
-  for(let nivel = 1; nivel <= TOOLCRIB_NIVELES; nivel++){
-    for(let slot = 1; slot <= TOOLCRIB_SLOTS; slot++){
+  for(let nivel = 1; nivel <= nN; nivel++){
+    for(let slot = 1; slot <= nS; slot++){
       const n = cuenta[nivel + "-" + slot] || 0;
       if(n < mejor.n) mejor = { nivel, slot, n };
     }
@@ -2656,7 +2665,7 @@ function sumarAComponentes(comps, nuevos){
   return comps;
 }
 
-/* Descuenta material del Tool Crib: primero de las cajas del rack 2 y, si
+/* Descuenta material del Tool Crib: primero de las cajas del rack B y, si
    falta, del registro anterior (colección "toolcrib"). */
 async function descontarDeToolCrib(nombre, cantidad){
   let falta = cantidad;
@@ -2713,7 +2722,7 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
     const origenRef = doc(db,"cajas",ubicacionOrigen);
     const origenSnap = await getDoc(origenRef);
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
-    if(esRackToolCrib(origenSnap.data().rack)){ alert("Ese material ya está en Tool Crib (rack 2)"); return false; }
+    if(esRackToolCrib(origenSnap.data().rack)){ alert("Ese material ya está en Tool Crib (rack B)"); return false; }
 
     let componentes = origenSnap.data().componentes || [];
     const idx = componentes.findIndex(c => String(c.nombre).toLowerCase() === nombreMaterial.toLowerCase());
@@ -2726,7 +2735,7 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
 
     const pnMaterial = componentes[idx].pn || "NO APLICA";
 
-    // caja del rack 2 que lo recibe
+    // caja del rack B que lo recibe
     const ubicacionToolCrib = await cajaSueltaToolCrib();
     const destRef = doc(db,"cajas",ubicacionToolCrib);
     const destSnap = await getDoc(destRef);
@@ -2764,7 +2773,7 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
     if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
     if(typeof window.renderToolCrib === "function") await window.renderToolCrib(true);
 
-    alert(`${cantidad} × ${nombreMaterial} enviado(s) a Tool Crib (rack 2, caja ${ubicacionToolCrib})` +
+    alert(`${cantidad} × ${nombreMaterial} enviado(s) a Tool Crib (rack B, caja ${ubicacionToolCrib})` +
       (conservarCaja ? "" : (cajaLiberada ? ". La caja quedó liberada del rack." : ". La caja se conservó porque aún tiene material.")));
     return true;
 
@@ -2805,7 +2814,7 @@ window.buscarCajasToolCrib = async function(query, listarTodas){
   const numCaja = parseConsultaCaja(query);   // "CAJA 20" → solo la caja 20
 
   return cacheCajas
-    .filter(c => !esRackToolCrib(c.rack))   // lo del rack 2 ya está en Tool Crib
+    .filter(c => !esRackToolCrib(c.rack))   // lo del rack B ya está en Tool Crib
     .filter(c => !query ? true : numCaja !== null
       ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
       : (String(c.ubicacion || "").toLowerCase().includes(query) ||
@@ -2878,7 +2887,7 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
 
     const dataOrigen = origenSnap.data();
-    if(esRackToolCrib(dataOrigen.rack)){ alert("Esa caja ya está en Tool Crib (rack 2)"); return false; }
+    if(esRackToolCrib(dataOrigen.rack)){ alert("Esa caja ya está en Tool Crib (rack B)"); return false; }
     const compsOrigen = dataOrigen.componentes || [];
 
     const pedido = new Map();
@@ -2920,17 +2929,17 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     const lote = writeBatch(db);
     const fecha = new Date().toLocaleString();
 
-    // --- Tool Crib = rack 2 ---
+    // --- Tool Crib = rack B ---
     let ubicacionToolCrib;
 
     if(conCaja){
-      // la caja se va completa al rack 2 (con el material enviado)
+      // la caja se va completa al rack B (con el material enviado)
       const { nivel, slot } = slotToolCribLibre();
       const etiquetaCaja = normCaja(dataOrigen.caja || ubicacionOrigen);
       ubicacionToolCrib = buildUbicacion(RACK_TOOLCRIB, nivel, slot, etiquetaCaja);
       const cribCajaRef = doc(db,"cajas",ubicacionToolCrib);
       const yaExiste = await getDoc(cribCajaRef);
-      if(yaExiste.exists()){ alert("Ya existe esa caja en el rack 2"); return false; }
+      if(yaExiste.exists()){ alert("Ya existe esa caja en el rack B"); return false; }
 
       lote.set(cribCajaRef, {
         rack: RACK_TOOLCRIB, nivel, slot, caja: etiquetaCaja, ubicacion: ubicacionToolCrib,
@@ -2945,7 +2954,7 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
       });
       lote.delete(origenRef);
     } else {
-      // material suelto: entra a una caja del rack 2; la caja de origen se queda en su lugar
+      // material suelto: entra a una caja del rack B; la caja de origen se queda en su lugar
       ubicacionToolCrib = await cajaSueltaToolCrib();
       const sueltaRef = doc(db,"cajas",ubicacionToolCrib);
       const sueltaSnap = await getDoc(sueltaRef);
@@ -3008,8 +3017,8 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     const piezas = enviados.reduce((t,e) => t + e.cantidad, 0);
     alert(
       (cajaCompleta
-        ? `La caja ${ubicacionOrigen} se envió a Tool Crib (rack 2: ${ubicacionToolCrib}) con todo su material (${piezas} pzs).`
-        : `${piezas} pzs enviadas a Tool Crib (rack 2: ${ubicacionToolCrib}) desde ${ubicacionOrigen}` +
+        ? `La caja ${ubicacionOrigen} se envió a Tool Crib (rack B: ${ubicacionToolCrib}) con todo su material (${piezas} pzs).`
+        : `${piezas} pzs enviadas a Tool Crib (rack B: ${ubicacionToolCrib}) desde ${ubicacionOrigen}` +
           (conCaja ? ` junto con la caja.` : `. La caja se conservó en su lugar.`)) +
       (debeReasignar ? `\nEl material restante se reasignó a ${ubicacionReasignar}.` : "")
     );
