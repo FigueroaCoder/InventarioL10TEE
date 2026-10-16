@@ -475,3 +475,23 @@ En **Movimientos → Material a Tool Crib**:
 ## Update: Rack B habilitado
 - Racks activos: **A y B** (`RACKS_ACTIVOS_FIJOS` en `app.js`). Rack A sigue mostrando todo lo registrado; en el rack B se ven las cajas **registradas o acomodadas** (nuevas) en su posición, y el material viejo de migración sin acomodar sigue en pendientes. No se borró ni se modificó ningún dato: las cajas del rack B solo estaban ocultas por la configuración.
 - En el 3D el orden de frente queda: Tarima 1, rack A, rack B, Tarimas 2, 3 y 4, y al final pendientes.
+
+---
+
+## Update: Tool Crib = Rack 2 (detrás de la barda)
+
+**Archivos modificados:** `app.js`, `rack3d.js`, `CAMBIOS.md` (sin cambios en Firestore ni en reglas).
+
+### En el 3D
+- Al girar la cámara **detrás de la barda** se ve el mismo tipo de barda (lámina con costillas) por el otro lado y, pegado a ella, el **Rack 2** con un letrero grande que dice **TOOL CRIB** (y la etiqueta en el piso).
+- El Rack 2 funciona como cualquier rack: clic en el rack → clic en un slot → ver/inspeccionar cajas. La cámara, la galería y la búsqueda ("CAJA 20", material) ya trabajan del lado de atrás. Se agregó una luz trasera para que se vea bien.
+- El Rack 2 es virtual (se define en `app.js`: `RACK_TOOLCRIB = "2"`, `TOOLCRIB_NIVELES = 3`, `TOOLCRIB_SLOTS = 4`); no hay que crear nada en Firestore. En los selectores aparece como **Tool Crib (Rack 2)**.
+
+### Tool Crib y Rack 2 son lo mismo
+- **Todo lo que está en el Rack 2** (lo que ya estuviera registrado ahí, lo que se registre en Entrada o lo que se mueva con *Mover cajas / material*) **aparece solo en la tabla "Material en Tool Crib"**, sumado por material. Lo que ya estaba en la tabla anterior de Tool Crib se conserva y se suma.
+- **Todo lo que se envía a Tool Crib se guarda en el Rack 2**:
+  - *Caja completa / con caja:* la caja se mueve al Rack 2 (al slot con menos cajas) con el material enviado, conservando su número.
+  - *Material suelto o sin caja:* entra a una caja del Rack 2 (la primera; si no hay ninguna se crea una en `2-01-01`).
+- **Regresar de Tool Crib** y **enviar a Scrap desde Tool Crib** descuentan primero de las cajas del Rack 2 y, si falta, del registro anterior.
+- Las cajas del Rack 2 ya no aparecen como opción para enviar a Tool Crib (ya están ahí).
+- El Rack 2 no cuenta como "pendiente de acomodar".

@@ -209,6 +209,20 @@
     return new THREE.CanvasTexture(canvas);
   }
 
+  function createToolCribSignTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#facc15'; ctx.fillRect(0, 0, 1024, 256);
+    ctx.strokeStyle = '#78350f'; ctx.lineWidth = 14; ctx.strokeRect(10, 10, 1004, 236);
+    ctx.fillStyle = '#1c1917'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '900 150px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('TOOL CRIB', 512, 132);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.anisotropy = 4;
+    return tex;
+  }
+
   function createFrontLabelMaterial(boxNumberText, labelColor) {
     const canvas = document.createElement('canvas');
     canvas.width = 256; canvas.height = 256;
@@ -281,6 +295,11 @@
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
     scene.add(sun);
+
+    // luz desde atrás de la barda para que el Tool Crib (rack 2) se vea bien al girar
+    const sunTrasero = new THREE.DirectionalLight(0xffffff, 0.8);
+    sunTrasero.position.set(2, 10, -10);
+    scene.add(sunTrasero);
 
     hoverLight = new THREE.PointLight(0x38bdf8, 0, 4);
     scene.add(hoverLight);
@@ -377,8 +396,9 @@
     if (areaGlowMesh) areaGlowMesh.visible = false;
   }
 
-  function buildUpright(x, alturaRack) {
+  function buildUpright(x, alturaRack, zc) {
     const group = new THREE.Group();
+    group.position.z = zc || 0;
     const postGeo = new THREE.BoxGeometry(0.06, alturaRack, 0.06);
 
     const p1 = new THREE.Mesh(postGeo, matGreenIndustrial);
@@ -414,7 +434,8 @@
     limpiarMundo();
 
     const activos = (racks || []).filter(r => r.status === "active");
-    const racksFis = activos.filter(r => !r.tarima);
+    const racksFis = activos.filter(r => !r.tarima && !r.toolcrib);
+    const rackToolCrib = activos.find(r => r.toolcrib);
     const tarimas = activos.filter(r => r.tarima)
       .sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), undefined, { numeric: true }));
     const tarimaIzq = tarimas.filter(t => String(t.nombre).toUpperCase() === "T1");   // Tarima 1: a la izquierda del rack
@@ -445,7 +466,9 @@
 
     const wallZ = -0.55;
     const alturaPared = 8;
-    const backWall = new THREE.Mesh(new THREE.PlaneGeometry(anchoMundo + 10, alturaPared), sheetMat);
+    const wallMat = sheetMat.clone();
+    wallMat.side = THREE.DoubleSide;     // la barda se ve igual por los dos lados
+    const backWall = new THREE.Mesh(new THREE.PlaneGeometry(anchoMundo + 10, alturaPared), wallMat);
     backWall.position.set(centroX, alturaPared / 2, wallZ);
     backWall.receiveShadow = true;
     worldGroup.add(backWall);
@@ -457,54 +480,74 @@
       const rib = new THREE.Mesh(new THREE.BoxGeometry(0.12, alturaPared, 0.05), sheetMat);
       rib.position.set(posX, alturaPared / 2, wallZ + 0.025);
       worldGroup.add(rib);
+      // mismas costillas del otro lado de la barda (zona del Tool Crib)
+      const ribAtras = rib.clone();
+      ribAtras.position.z = wallZ - 0.025;
+      worldGroup.add(ribAtras);
     }
 
 
     let cursorX = 0;
     const paralesPuestos = [];
 
-    function ponerParal(x, altura) {
-      const yaEsta = paralesPuestos.some(p => Math.abs(p.x - x) < 0.001 && p.altura >= altura - 0.001);
+    function ponerParal(x, altura, zc) {
+      zc = zc || 0;
+      const yaEsta = paralesPuestos.some(p => Math.abs(p.x - x) < 0.001 && Math.abs(p.zc - zc) < 0.001 && p.altura >= altura - 0.001);
       if (yaEsta) return;
-      paralesPuestos.push({ x, altura });
-      worldGroup.add(buildUpright(x, altura));
+      paralesPuestos.push({ x, altura, zc });
+      worldGroup.add(buildUpright(x, altura, zc));
     }
 
-    racksFis.forEach(rack => {
+    /* Construye un rack. zc = centro del rack en Z; dir = +1 mira hacia el frente del
+       almacén, -1 mira hacia atrás (rack 2 / Tool Crib, detrás de la barda). */
+    const construirRackFisico = (rack, rackX, zc, dir) => {
 
       const nNiveles = Math.max(1, parseInt(rack.niveles) || 1);
       const nSlots = Math.max(1, parseInt(rack.slots) || 1);
       const shelfWidth = nSlots * SLOT_W;
       const alturaRack = Y_BASE + nNiveles * NIVEL_H;
-      const rackX = cursorX;
+      const esTC = !!rack.toolcrib;
 
       const rackObj = {
         id: `Rack ${rack.nombre}`,
         rackIndex: rack.nombre,
         niveles: nNiveles,
         slots: nSlots,
-        position: new THREE.Vector3(rackX + shelfWidth / 2, alturaRack / 2, 0)
+        position: new THREE.Vector3(rackX + shelfWidth / 2, alturaRack / 2, zc),
+        zc, dir
       };
 
-      ponerParal(rackX, alturaRack);
-      ponerParal(rackX + shelfWidth, alturaRack);
+      ponerParal(rackX, alturaRack, zc);
+      ponerParal(rackX + shelfWidth, alturaRack, zc);
 
       // etiqueta en el piso
       const labelMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(Math.min(1.4, shelfWidth * 0.9), 0.6),
-        new THREE.MeshBasicMaterial({ map: createFloorLabelTexture("RACK " + rack.nombre), transparent: true, opacity: 0.9 })
+        new THREE.MeshBasicMaterial({ map: createFloorLabelTexture(esTC ? "TOOL CRIB" : "RACK " + rack.nombre, esTC ? 36 : undefined), transparent: true, opacity: 0.9 })
       );
-      labelMesh.rotation.x = -Math.PI / 2;
-      labelMesh.position.set(rackX + shelfWidth / 2, 0.005, 0.85);
+      labelMesh.rotation.set(-Math.PI / 2, 0, dir < 0 ? Math.PI : 0);
+      labelMesh.position.set(rackX + shelfWidth / 2, 0.005, zc + dir * 0.85);
       worldGroup.add(labelMesh);
+
+      // letrero grande "TOOL CRIB" sobre el rack 2, pegado a la barda (se lee desde atrás)
+      if (esTC) {
+        const anchoLetrero = Math.max(2.4, shelfWidth);
+        const letrero = new THREE.Mesh(
+          new THREE.PlaneGeometry(anchoLetrero, anchoLetrero / 4),
+          new THREE.MeshBasicMaterial({ map: createToolCribSignTexture() })
+        );
+        letrero.rotation.y = Math.PI;
+        letrero.position.set(rackX + shelfWidth / 2, alturaRack + 0.75, wallZ - 0.07);
+        worldGroup.add(letrero);
+      }
 
       for (let nivel = 1; nivel <= nNiveles; nivel++) {
 
         const y = Y_BASE + (nivel - 1) * NIVEL_H;
 
         const bFront = new THREE.Mesh(new THREE.BoxGeometry(shelfWidth, 0.08, 0.04), matOrangeBeam);
-        bFront.position.set(rackX + shelfWidth / 2, y, SHELF_DEPTH / 2); bFront.castShadow = true;
-        const bBack = bFront.clone(); bBack.position.z = -SHELF_DEPTH / 2;
+        bFront.position.set(rackX + shelfWidth / 2, y, zc + dir * SHELF_DEPTH / 2); bFront.castShadow = true;
+        const bBack = bFront.clone(); bBack.position.z = zc - dir * SHELF_DEPTH / 2;
         worldGroup.add(bFront, bBack);
 
         for (let slot = 1; slot <= nSlots; slot++) {
@@ -513,13 +556,13 @@
 
           const slotMesh = new THREE.Mesh(
             new THREE.BoxGeometry(SLOT_W - 0.04, 0.02, SHELF_DEPTH - 0.04), matWireMesh);
-          slotMesh.position.set(slotX, y + 0.01, 0);
+          slotMesh.position.set(slotX, y + 0.01, zc);
           worldGroup.add(slotMesh);
 
           const slotHitbox = new THREE.Mesh(
             new THREE.BoxGeometry(SLOT_W, NIVEL_H * 0.75, SHELF_DEPTH),
             new THREE.MeshBasicMaterial({ visible: false }));
-          slotHitbox.position.set(slotX, y + 0.28, 0);
+          slotHitbox.position.set(slotX, y + 0.28, zc);
           worldGroup.add(slotHitbox);
 
           const slotIdCode = `${rack.nombre}-${pad2(nivel)}-${pad2(slot)}`;
@@ -529,7 +572,8 @@
             rackIndex: rack.nombre,
             level: nivel,
             slotIndex: slot,
-            position: new THREE.Vector3(slotX, y + 0.2, 0),
+            position: new THREE.Vector3(slotX, y + 0.2, zc),
+            zc, dir,
             hitbox: slotHitbox,
             boxes: []
           };
@@ -553,16 +597,15 @@
             const estadoManual = !!ESTADOS[String(c.estado || "").toLowerCase()];
 
             const p = plan.items[i];
-            const posX = p.x, posY = p.y, posZ = p.z;
+            const posX = p.x, posY = p.y, posZ = zc + dir * p.z;
             const dimsCaja = p.dims;
 
             const etiqueta = String(c.caja || c.ubicacion);
 
-            const boxMaterials = [
-              matBoxSide, matBoxSide, matBoxSide, matBoxSide,
-              createFrontLabelMaterial(etiqueta, bConfig.color),
-              matBoxSide
-            ];
+            // la etiqueta va en la cara que mira hacia el frente del rack (+Z o -Z)
+            const boxMaterials = dir > 0
+              ? [matBoxSide, matBoxSide, matBoxSide, matBoxSide, createFrontLabelMaterial(etiqueta, bConfig.color), matBoxSide]
+              : [matBoxSide, matBoxSide, matBoxSide, matBoxSide, matBoxSide, createFrontLabelMaterial(etiqueta, bConfig.color)];
 
             const boxMesh = new THREE.Mesh(
               new THREE.BoxGeometry(dimsCaja.w, dimsCaja.h, dimsCaja.d),
@@ -652,8 +695,17 @@
       raycastTargets.push(rackHitbox);
       racksData.push(rackObj);
 
-      cursorX += shelfWidth + GAP_RACKS;
+      return shelfWidth;
+    };
+
+    racksFis.forEach(rack => {
+      cursorX += construirRackFisico(rack, cursorX, 0, 1) + GAP_RACKS;
     });
+
+    // --- RACK 2 = TOOL CRIB: detrás de la barda, espejo del frente ---
+    if (rackToolCrib) {
+      construirRackFisico(rackToolCrib, 0, 2 * wallZ, -1);
+    }
 
     // --- TARIMAS: la 1 a la izquierda del rack, la 2, 3 y 4 a la derecha ---
     tarimaIzq.forEach((t, i) => {
@@ -1114,10 +1166,11 @@
 
     const camDist = Math.max(4.1, rack.slots * 1.1);
     const camY = Math.max(1.4, (rack.niveles * NIVEL_H) / 2);
+    const rZc = rack.zc || 0, rDir = rack.dir || 1;
 
-    animateCamera(new THREE.Vector3(rack.position.x, camY, camDist), new THREE.Vector3(rack.position.x, camY, 0));
+    animateCamera(new THREE.Vector3(rack.position.x, camY, rZc + rDir * camDist), new THREE.Vector3(rack.position.x, camY, rZc));
 
-    hud(`Rack ${rack.rackIndex}`, "Viendo los niveles completos. Selecciona un slot.", `RACK ${rack.rackIndex}`);
+    hud(String(rack.rackIndex) === "2" ? "Tool Crib · Rack 2" : `Rack ${rack.rackIndex}`, "Viendo los niveles completos. Selecciona un slot.", `RACK ${rack.rackIndex}`);
     vistaGuardada = { level: 1, rack: rack.rackIndex };
   }
 
@@ -1327,7 +1380,9 @@
     cerrarPanelPend();
     clearHover();
 
-    backdropPlane.position.set(slot.position.x, slot.position.y + 0.1, 0.5);
+    const sZc = slot.zc || 0, sDir = slot.dir || 1;
+    backdropPlane.rotation.y = sDir < 0 ? Math.PI : 0;
+    backdropPlane.position.set(slot.position.x, slot.position.y + 0.1, sZc + sDir * 0.5);
     gsap.to(backdropMat, { opacity: 0.95, duration: 0.5 });
 
     renderSlotBoxes();
@@ -1351,10 +1406,13 @@
 
     // posición donde se inspecciona la caja
     const centro = box.mesh.position.clone();
+    const bDir = (box.parentSlot && box.parentSlot.dir) || 1;
+    const bZc = (box.parentSlot && box.parentSlot.zc) || 0;
+    backdropPlane.rotation.y = bDir < 0 ? Math.PI : 0;
 
     if (activeSlot && box.parentSlot === activeSlot) {
       // viene de la galería del slot: la caja se pone de frente y las demás se ocultan
-      centro.set(activeSlot.position.x, activeSlot.position.y + 0.1, 0.95);
+      centro.set(activeSlot.position.x, activeSlot.position.y + 0.1, bZc + bDir * 0.95);
       gsap.killTweensOf(box.fly);
       gsap.killTweensOf(box.mesh.position);
       gsap.to(box.mesh.position, { x: centro.x, y: centro.y, z: centro.z, duration: 0.4, ease: "power2.out" });
@@ -1365,13 +1423,13 @@
       activeSlot.boxes.forEach(b => { if (b !== box) b.mesh.visible = false; });
     }
 
-    backdropPlane.position.set(centro.x, centro.y, centro.z - 0.2);
+    backdropPlane.position.set(centro.x, centro.y, centro.z - bDir * 0.2);
     gsap.to(backdropMat, { opacity: 0.88, duration: 0.5 });
 
     gsap.to(box.mesh.rotation, { y: 0, x: 0, z: 0, duration: 0.4, ease: "power2.out" });
 
     animateCamera(
-      new THREE.Vector3(centro.x, centro.y, centro.z + 0.85),
+      new THREE.Vector3(centro.x, centro.y, centro.z + bDir * 0.85),
       new THREE.Vector3(centro.x, centro.y, centro.z),
       0.8
     );
@@ -1884,8 +1942,9 @@
       const count = matching.length;
 
       matching.forEach((box, index) => {
-        const xOffset = (index - (count - 1) / 2) * 0.32;
-        const frontPos = box.homePos.clone().add(new THREE.Vector3(xOffset, 0, 0.75));
+        const bd = (box.parentSlot && box.parentSlot.dir) || 1;
+        const xOffset = (index - (count - 1) / 2) * 0.32 * bd;
+        const frontPos = box.homePos.clone().add(new THREE.Vector3(xOffset, 0, 0.75 * bd));
 
         gsap.to(box.mesh.position, { x: frontPos.x, y: frontPos.y, z: frontPos.z, duration: 0.6, ease: "power2.out" });
 

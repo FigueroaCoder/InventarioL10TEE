@@ -124,16 +124,35 @@ const RACKS_ACTIVOS_FIJOS = ["A","B"];
 const RACKS_TODO_REGISTRADO = ["A"];
 const TARIMAS_ALMACEN = ["T1","T2","T3","T4"];
 
+/* =====================
+RACK 2 = TOOL CRIB
+-------------------------------------------------------
+El Tool Crib es el rack 2: está detrás de la barda (se ve al girar el 3D)
+con un letrero que dice TOOL CRIB. Es un rack virtual (se define aquí, no
+hay que crear nada en Firestore):
+  - Todo lo que se envía a Tool Crib se guarda en el rack 2.
+  - Todo lo que hay en el rack 2 (o se mueva / registre ahí) cuenta
+    automáticamente como material en Tool Crib.
+===================== */
+const RACK_TOOLCRIB = "2";
+const TOOLCRIB_NIVELES = 3;
+const TOOLCRIB_SLOTS = 4;
+function esRackToolCrib(nombre){
+  return String(nombre ?? "").toUpperCase() === RACK_TOOLCRIB;
+}
+window.esRackToolCrib = esRackToolCrib;
+
 function esRackTarima(nombre){
   return TARIMAS_ALMACEN.includes(String(nombre ?? "").toUpperCase());
 }
 function esRackActivoFijo(nombre){
   const n = String(nombre ?? "").toUpperCase();
-  return RACKS_ACTIVOS_FIJOS.includes(n) || TARIMAS_ALMACEN.includes(n);
+  return RACKS_ACTIVOS_FIJOS.includes(n) || TARIMAS_ALMACEN.includes(n) || n === RACK_TOOLCRIB;
 }
 /* nombre para mostrar: "Tarima 1" / "Rack A" */
 function nombreRack(nombre){
   const n = String(nombre ?? "").toUpperCase();
+  if(n === RACK_TOOLCRIB) return "Tool Crib (Rack 2)";
   return esRackTarima(n) ? "Tarima " + n.slice(1) : "Rack " + nombre;
 }
 window.esRackTarima = esRackTarima;
@@ -143,14 +162,18 @@ window.nombreRack = nombreRack;
    solo el rack A queda activo y se agregan las tarimas (virtuales). */
 function aplicarConfigRacks(lista){
   const reales = (lista || [])
-    .filter(r => !esRackTarima(r.nombre))
+    .filter(r => !esRackTarima(r.nombre) && !esRackToolCrib(r.nombre))
     .map(r => RACKS_ACTIVOS_FIJOS.includes(String(r.nombre).toUpperCase())
       ? { ...r, status:"active" }
       : { ...r, status:"inactive", fijoInactivo:true });
   const tarimas = TARIMAS_ALMACEN.map(t => ({
     idDoc: t, nombre: t, niveles: 1, slots: 1, status: "active", tarima: true
   }));
-  return reales.concat(tarimas).sort((a,b) => String(a.nombre).localeCompare(String(b.nombre), undefined, {numeric:true}));
+  const toolcrib = [{
+    idDoc: RACK_TOOLCRIB, nombre: RACK_TOOLCRIB, niveles: TOOLCRIB_NIVELES, slots: TOOLCRIB_SLOTS,
+    status: "active", toolcrib: true
+  }];
+  return reales.concat(tarimas, toolcrib).sort((a,b) => String(a.nombre).localeCompare(String(b.nombre), undefined, {numeric:true}));
 }
 
 /* =====================
@@ -170,7 +193,7 @@ function esCajaPendiente(c){
   if(!c) return false;
   const r = String(c.rack ?? "").toUpperCase();
   /* rack A y tarimas: todo lo registrado ahí está ya acomodado */
-  if(RACKS_TODO_REGISTRADO.includes(r) || TARIMAS_ALMACEN.includes(r)) return false;
+  if(RACKS_TODO_REGISTRADO.includes(r) || TARIMAS_ALMACEN.includes(r) || r === RACK_TOOLCRIB) return false;
   /* rack B: solo es pendiente el material viejo de migración sin acomodar;
      las cajas nuevas (migracion:false) o ya acomodadas se ven en el rack */
   if(RACKS_ACTIVOS_FIJOS.includes(r)) return c.migracion !== false && c.acomodada !== true;
@@ -210,6 +233,7 @@ async function loadCajas(force){
     idDoc: d.id,
     ...d.data()
   }));
+  if(typeof recomponerToolCrib === "function") recomponerToolCrib();
 
   return cacheCajas;
 }
@@ -888,8 +912,10 @@ window.toggleRackStatus = async function(nombre){
     const rack = cacheRacks.find(r => r.nombre === nombre);
     if(!rack) return;
 
-    if(rack.tarima || rack.fijoInactivo){
-      alert(rack.tarima
+    if(rack.tarima || rack.toolcrib || rack.fijoInactivo){
+      alert(rack.toolcrib
+        ? "El rack 2 (Tool Crib) está siempre activo."
+        : rack.tarima
         ? "Las tarimas están siempre activas."
         : "Los racks activos del almacén están fijos (A y B).");
       return;
@@ -2476,12 +2502,58 @@ function claveMaterial(nombre){
   return String(nombre || "").toLowerCase().trim().replace(/[\/\\]/g,"-");
 }
 
+/* Tool Crib = lo que hay en las cajas del RACK 2 (automático) + los materiales
+   que ya estaban registrados en la colección "toolcrib" (antes del rack 2).
+   Los dos se suman por material. */
+let cacheToolCribLegacy = [];
+
+function cajasToolCrib(){
+  return cacheCajas.filter(c => esRackToolCrib(c.rack));
+}
+
+function recomponerToolCrib(){
+  const mapa = new Map();
+
+  cacheToolCribLegacy.forEach(m => {
+    mapa.set(claveMaterial(m.nombre), {
+      idDoc: m.idDoc, nombre: m.nombre, pn: m.pn || "NO APLICA",
+      cantidad: Number(m.cantidad) || 0, cantLegacy: Number(m.cantidad) || 0, cantRack: 0,
+      ultimaUbicacion: m.ultimaUbicacion || "", responsable: m.responsable || "",
+      comentarios: m.comentarios || "", fecha: m.fecha || ""
+    });
+  });
+
+  cajasToolCrib().forEach(c => {
+    (c.componentes || []).forEach(x => {
+      const cant = Number(x.cantidad) || 0;
+      if(cant <= 0) return;
+      const key = claveMaterial(x.nombre);
+      const ub = `CAJA ${c.caja || c.ubicacion} · ${c.ubicacion}`;
+      let e = mapa.get(key);
+      if(!e){
+        e = { idDoc:key, nombre:x.nombre, pn:"NO APLICA", cantidad:0, cantLegacy:0, cantRack:0,
+              ultimaUbicacion:"", responsable:"", comentarios:"", fecha:"" };
+        mapa.set(key, e);
+      }
+      e.cantidad += cant;
+      e.cantRack += cant;
+      if(x.pn && x.pn !== "NO APLICA") e.pn = x.pn;
+      e.ultimaUbicacion = e.ultimaUbicacion && e.ultimaUbicacion.includes(ub) ? e.ultimaUbicacion
+        : (e.cantRack === cant ? ub : e.ultimaUbicacion + " | " + ub);
+      if(x.responsable) e.responsable = x.responsable;
+      if(x.comentarios && x.comentarios !== "NO APLICA") e.comentarios = x.comentarios;
+    });
+  });
+
+  cacheToolCrib = [...mapa.values()].sort((a,b) => String(a.nombre).localeCompare(String(b.nombre)));
+  return cacheToolCrib;
+}
+
 async function loadToolCrib(force){
   if(!force && cacheToolCrib.length > 0) return cacheToolCrib;
   const snapshot = await getDocs(collection(db,"toolcrib"));
-  cacheToolCrib = snapshot.docs.map(d => ({ idDoc:d.id, ...d.data() }));
-  cacheToolCrib.sort((a,b) => String(a.nombre).localeCompare(String(b.nombre)));
-  return cacheToolCrib;
+  cacheToolCribLegacy = snapshot.docs.map(d => ({ idDoc:d.id, ...d.data() }));
+  return recomponerToolCrib();
 }
 
 async function loadScrap(force){
@@ -2535,8 +2607,91 @@ async function intentarLiberarCaja(ubicacion){
   return false;
 }
 
+/* ---------- helpers del RACK 2 (Tool Crib) ---------- */
+
+/* Caja del rack 2 donde cae el material suelto (sin caja). Si el rack 2 está
+   vacío se crea una caja nueva en 2-01-01. */
+async function cajaSueltaToolCrib(){
+  await loadCajas(true);
+  const lista = cajasToolCrib().sort((a,b) =>
+    String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, { numeric:true }));
+  if(lista.length) return lista[0].ubicacion;
+
+  const numero = siguienteNumeroCaja();
+  const ubic = buildUbicacion(RACK_TOOLCRIB, 1, 1, numero);
+  await setDoc(doc(db,"cajas",ubic), {
+    rack: RACK_TOOLCRIB, nivel: 1, slot: 1, caja: numero, ubicacion: ubic,
+    componentes: [], migracion: false
+  });
+  return ubic;
+}
+
+/* Slot del rack 2 con menos cajas (para las cajas que llegan completas) */
+function slotToolCribLibre(){
+  const cuenta = {};
+  cajasToolCrib().forEach(c => { const k = c.nivel + "-" + c.slot; cuenta[k] = (cuenta[k] || 0) + 1; });
+  let mejor = { nivel:1, slot:1, n: Infinity };
+  for(let nivel = 1; nivel <= TOOLCRIB_NIVELES; nivel++){
+    for(let slot = 1; slot <= TOOLCRIB_SLOTS; slot++){
+      const n = cuenta[nivel + "-" + slot] || 0;
+      if(n < mejor.n) mejor = { nivel, slot, n };
+    }
+  }
+  return mejor;
+}
+
+/* suma material a una lista de componentes (por nombre) */
+function sumarAComponentes(comps, nuevos){
+  nuevos.forEach(m => {
+    const i = comps.findIndex(x => String(x.nombre).toLowerCase() === String(m.nombre).toLowerCase());
+    if(i >= 0){
+      comps[i].cantidad = (Number(comps[i].cantidad) || 0) + m.cantidad;
+      if(m.pn && m.pn !== "NO APLICA") comps[i].pn = m.pn;
+      comps[i].responsable = getUser();
+    } else {
+      comps.push({ nombre: m.nombre, pn: m.pn || "NO APLICA", cantidad: m.cantidad,
+                   comentarios: m.comentarios || "NO APLICA", responsable: getUser() });
+    }
+  });
+  return comps;
+}
+
+/* Descuenta material del Tool Crib: primero de las cajas del rack 2 y, si
+   falta, del registro anterior (colección "toolcrib"). */
+async function descontarDeToolCrib(nombre, cantidad){
+  let falta = cantidad;
+  const key = claveMaterial(nombre);
+
+  for(const c of cajasToolCrib()){
+    if(falta <= 0) break;
+    const ref = doc(db,"cajas",c.ubicacion);
+    const snap = await getDoc(ref);
+    if(!snap.exists()) continue;
+    const comps = snap.data().componentes || [];
+    const idx = comps.findIndex(x => claveMaterial(x.nombre) === key);
+    if(idx < 0) continue;
+    const q = Math.min(falta, Number(comps[idx].cantidad) || 0);
+    if(q <= 0) continue;
+    comps[idx].cantidad = (Number(comps[idx].cantidad) || 0) - q;
+    if(comps[idx].cantidad <= 0) comps.splice(idx,1);
+    await updateDoc(ref, { componentes: comps });
+    falta -= q;
+  }
+
+  if(falta > 0){
+    const cribRef = doc(db,"toolcrib",key);
+    const cribSnap = await getDoc(cribRef);
+    if(cribSnap.exists()){
+      const rest = (Number(cribSnap.data().cantidad) || 0) - falta;
+      if(rest <= 0) await deleteDoc(cribRef);
+      else await updateDoc(cribRef, { cantidad: rest });
+    }
+  }
+  return true;
+}
+
 /* =====================
-   ENVÍO A TOOL CRIB
+   ENVÍO A TOOL CRIB (el material se guarda en el RACK 2)
    conservarCaja = true  → la caja se queda en el rack (aunque quede vacía).
    conservarCaja = false → se intenta liberar/borrar la caja del rack; si
    tiene otro material, se ofrece reubicarlo primero (ver intentarLiberarCaja).
@@ -2558,6 +2713,7 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
     const origenRef = doc(db,"cajas",ubicacionOrigen);
     const origenSnap = await getDoc(origenRef);
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
+    if(esRackToolCrib(origenSnap.data().rack)){ alert("Ese material ya está en Tool Crib (rack 2)"); return false; }
 
     let componentes = origenSnap.data().componentes || [];
     const idx = componentes.findIndex(c => String(c.nombre).toLowerCase() === nombreMaterial.toLowerCase());
@@ -2570,33 +2726,20 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
 
     const pnMaterial = componentes[idx].pn || "NO APLICA";
 
+    // caja del rack 2 que lo recibe
+    const ubicacionToolCrib = await cajaSueltaToolCrib();
+    const destRef = doc(db,"cajas",ubicacionToolCrib);
+    const destSnap = await getDoc(destRef);
+    const compsDest = sumarAComponentes(destSnap.exists() ? (destSnap.data().componentes || []) : [],
+      [{ nombre: nombreMaterial, pn: pnMaterial, cantidad, comentarios }]);
+
     componentes[idx].cantidad -= cantidad;
     if(componentes[idx].cantidad <= 0) componentes.splice(idx,1);
 
-    await updateDoc(origenRef, { componentes });
-
-    const key = claveMaterial(nombreMaterial);
-    const cribRef = doc(db,"toolcrib",key);
-    const cribSnap = await getDoc(cribRef);
-
-    if(cribSnap.exists()){
-      await updateDoc(cribRef, {
-        cantidad: (cribSnap.data().cantidad || 0) + cantidad,
-        pn: (pnMaterial && pnMaterial !== "NO APLICA") ? pnMaterial : (cribSnap.data().pn || "NO APLICA"),
-        ultimaUbicacion: ubicacionOrigen,
-        responsable: getUser(),
-        comentarios,
-        fecha: new Date().toLocaleString()
-      });
-    } else {
-      await setDoc(cribRef, {
-        nombre: nombreMaterial, pn: pnMaterial, cantidad,
-        ultimaUbicacion: ubicacionOrigen,
-        responsable: getUser(),
-        comentarios,
-        fecha: new Date().toLocaleString()
-      });
-    }
+    const loteEnvio = writeBatch(db);
+    loteEnvio.update(origenRef, { componentes });
+    loteEnvio.update(destRef, { componentes: compsDest });
+    await loteEnvio.commit();
 
     await addHist({
       ts: Date.now(),
@@ -2621,7 +2764,7 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
     if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
     if(typeof window.renderToolCrib === "function") await window.renderToolCrib(true);
 
-    alert(`${cantidad} × ${nombreMaterial} enviado(s) a Tool Crib` +
+    alert(`${cantidad} × ${nombreMaterial} enviado(s) a Tool Crib (rack 2, caja ${ubicacionToolCrib})` +
       (conservarCaja ? "" : (cajaLiberada ? ". La caja quedó liberada del rack." : ". La caja se conservó porque aún tiene material.")));
     return true;
 
@@ -2662,6 +2805,7 @@ window.buscarCajasToolCrib = async function(query, listarTodas){
   const numCaja = parseConsultaCaja(query);   // "CAJA 20" → solo la caja 20
 
   return cacheCajas
+    .filter(c => !esRackToolCrib(c.rack))   // lo del rack 2 ya está en Tool Crib
     .filter(c => !query ? true : numCaja !== null
       ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
       : (String(c.ubicacion || "").toLowerCase().includes(query) ||
@@ -2733,7 +2877,9 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     const origenSnap = await getDoc(origenRef);
     if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
 
-    const compsOrigen = origenSnap.data().componentes || [];
+    const dataOrigen = origenSnap.data();
+    if(esRackToolCrib(dataOrigen.rack)){ alert("Esa caja ya está en Tool Crib (rack 2)"); return false; }
+    const compsOrigen = dataOrigen.componentes || [];
 
     const pedido = new Map();
     for(const s of seleccion){
@@ -2774,37 +2920,38 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     const lote = writeBatch(db);
     const fecha = new Date().toLocaleString();
 
-    // --- Tool Crib: se suma por material ---
-    for(const e of enviados){
-      const key = claveMaterial(e.comp.nombre);
-      const cribRef = doc(db,"toolcrib",key);
-      const cribSnap = await getDoc(cribRef);
-      const pn = e.comp.pn || "NO APLICA";
+    // --- Tool Crib = rack 2 ---
+    let ubicacionToolCrib;
 
-      if(cribSnap.exists()){
-        lote.update(cribRef, {
-          cantidad: (cribSnap.data().cantidad || 0) + e.cantidad,
-          pn: (pn && pn !== "NO APLICA") ? pn : (cribSnap.data().pn || "NO APLICA"),
-          ultimaUbicacion: ubicacionOrigen,
-          responsable: getUser(),
-          comentarios,
-          fecha
-        });
-      } else {
-        lote.set(cribRef, {
-          nombre: e.comp.nombre, pn, cantidad: e.cantidad,
-          ultimaUbicacion: ubicacionOrigen,
-          responsable: getUser(),
-          comentarios,
-          fecha
-        });
-      }
-    }
-
-    // --- caja de origen ---
     if(conCaja){
+      // la caja se va completa al rack 2 (con el material enviado)
+      const { nivel, slot } = slotToolCribLibre();
+      const etiquetaCaja = normCaja(dataOrigen.caja || ubicacionOrigen);
+      ubicacionToolCrib = buildUbicacion(RACK_TOOLCRIB, nivel, slot, etiquetaCaja);
+      const cribCajaRef = doc(db,"cajas",ubicacionToolCrib);
+      const yaExiste = await getDoc(cribCajaRef);
+      if(yaExiste.exists()){ alert("Ya existe esa caja en el rack 2"); return false; }
+
+      lote.set(cribCajaRef, {
+        rack: RACK_TOOLCRIB, nivel, slot, caja: etiquetaCaja, ubicacion: ubicacionToolCrib,
+        componentes: enviados.map(e => ({
+          ...e.comp, cantidad: e.cantidad, responsable: getUser(), comentarios
+        })),
+        estado: dataOrigen.estado || null,
+        tamano: dataOrigen.tamano || null,
+        capacidad: (typeof dataOrigen.capacidad === "number") ? dataOrigen.capacidad : null,
+        migracion: false,
+        acomodada: true
+      });
       lote.delete(origenRef);
     } else {
+      // material suelto: entra a una caja del rack 2; la caja de origen se queda en su lugar
+      ubicacionToolCrib = await cajaSueltaToolCrib();
+      const sueltaRef = doc(db,"cajas",ubicacionToolCrib);
+      const sueltaSnap = await getDoc(sueltaRef);
+      const compsSuelta = sumarAComponentes(sueltaSnap.exists() ? (sueltaSnap.data().componentes || []) : [],
+        enviados.map(e => ({ nombre: e.comp.nombre, pn: e.comp.pn || "NO APLICA", cantidad: e.cantidad, comentarios })));
+      lote.update(sueltaRef, { componentes: compsSuelta });
       lote.update(origenRef, { componentes: restantes });
     }
 
@@ -2861,8 +3008,8 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
     const piezas = enviados.reduce((t,e) => t + e.cantidad, 0);
     alert(
       (cajaCompleta
-        ? `La caja ${ubicacionOrigen} se envió a Tool Crib con todo su material (${piezas} pzs).`
-        : `${piezas} pzs enviadas a Tool Crib desde ${ubicacionOrigen}` +
+        ? `La caja ${ubicacionOrigen} se envió a Tool Crib (rack 2: ${ubicacionToolCrib}) con todo su material (${piezas} pzs).`
+        : `${piezas} pzs enviadas a Tool Crib (rack 2: ${ubicacionToolCrib}) desde ${ubicacionOrigen}` +
           (conCaja ? ` junto con la caja.` : `. La caja se conservó en su lugar.`)) +
       (debeReasignar ? `\nEl material restante se reasignó a ${ubicacionReasignar}.` : "")
     );
@@ -2890,13 +3037,12 @@ window.regresarDeToolCrib = async function(nombreMaterial, cantidad, destino){
 
   try{
 
-    const key = claveMaterial(nombreMaterial);
-    const cribRef = doc(db,"toolcrib",key);
-    const cribSnap = await getDoc(cribRef);
+    await loadCajas(true);
+    await loadToolCrib(true);
+    const cribData = cacheToolCrib.find(m => claveMaterial(m.nombre) === claveMaterial(nombreMaterial));
 
-    if(!cribSnap.exists()){ alert("Ese material ya no está en Tool Crib"); return false; }
+    if(!cribData){ alert("Ese material ya no está en Tool Crib"); return false; }
 
-    const cribData = cribSnap.data();
     if((cribData.cantidad || 0) < cantidad){
       alert("Sin stock suficiente en Tool Crib. Disponible: " + cribData.cantidad);
       return false;
@@ -2949,12 +3095,7 @@ window.regresarDeToolCrib = async function(nombreMaterial, cantidad, destino){
       return false;
     }
 
-    const restante = (cribData.cantidad || 0) - cantidad;
-    if(restante <= 0){
-      await deleteDoc(cribRef);
-    } else {
-      await updateDoc(cribRef, { cantidad: restante });
-    }
+    await descontarDeToolCrib(nombreMaterial, cantidad);
 
     await addHist({
       ts: Date.now(),
@@ -3059,12 +3200,11 @@ window.enviarAScrap = async function(origenTipo, origenId, nombreMaterial, canti
 
     } else if(origenTipo === "toolcrib"){
 
-      const key = claveMaterial(nombreMaterial);
-      const cribRef = doc(db,"toolcrib",key);
-      const cribSnap = await getDoc(cribRef);
-      if(!cribSnap.exists()){ alert("Ese material ya no está en Tool Crib"); return false; }
+      await loadCajas(true);
+      await loadToolCrib(true);
+      const cribData = cacheToolCrib.find(m => claveMaterial(m.nombre) === claveMaterial(nombreMaterial));
+      if(!cribData){ alert("Ese material ya no está en Tool Crib"); return false; }
 
-      const cribData = cribSnap.data();
       if((cribData.cantidad || 0) < cantidad){
         alert("Sin stock suficiente en Tool Crib. Disponible: " + cribData.cantidad);
         return false;
@@ -3072,9 +3212,7 @@ window.enviarAScrap = async function(origenTipo, origenId, nombreMaterial, canti
 
       pnMaterial = cribData.pn || "NO APLICA";
       ubicacionTexto = "Tool Crib";
-      const restante = (cribData.cantidad || 0) - cantidad;
-      if(restante <= 0) await deleteDoc(cribRef);
-      else await updateDoc(cribRef, { cantidad: restante });
+      await descontarDeToolCrib(nombreMaterial, cantidad);
 
     } else {
       alert("Origen inválido");
@@ -3815,6 +3953,7 @@ function trIniciar(){
 
   trEscuchar("cajas", snap => {
     cacheCajas = snap.docs.map(d => ({ idDoc:d.id, ...d.data() }));
+    recomponerToolCrib();
     etqSincronizar();
   });
 
@@ -3830,8 +3969,8 @@ function trIniciar(){
   });
 
   trEscuchar("toolcrib", snap => {
-    cacheToolCrib = snap.docs.map(d => ({ idDoc:d.id, ...d.data() }));
-    cacheToolCrib.sort((a,b) => String(a.nombre).localeCompare(String(b.nombre)));
+    cacheToolCribLegacy = snap.docs.map(d => ({ idDoc:d.id, ...d.data() }));
+    recomponerToolCrib();
   });
 
   trEscuchar("scrap", snap => {
