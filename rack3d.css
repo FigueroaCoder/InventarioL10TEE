@@ -825,18 +825,3 @@ body.r3d-fs-abierto{ overflow: hidden; }
 @media (max-width: 760px){
   .pend-panel{ top: 170px; width: auto; left: 14px; }
 }
-
-/* Panel de almacenamiento y registro directo por tarima */
-.tarima-panel{
-  position:absolute; inset:82px 3% 68px; z-index:80; pointer-events:auto;
-  overflow:auto; padding:18px; border:1px solid rgba(250,204,21,.55); border-radius:14px;
-  background:rgba(10,18,32,.97); color:#e2e8f0; box-shadow:0 18px 60px rgba(0,0,0,.5);
-}
-.tarima-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(148,163,184,.25)}
-.tarima-head b{font-size:1.15rem;color:#facc15}.tarima-head div div{font-size:.82rem;color:#94a3b8;margin-top:4px}
-.tarima-actions{display:flex;justify-content:flex-start;padding:12px 0}
-.tarima-cajas{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;align-items:start}
-.tarima-caja{min-width:0}.tarima-panel .box-summary-card.tarima-card{position:relative;inset:auto;width:auto;max-width:none;opacity:1;transform:none;margin:0;pointer-events:auto}
-.tarima-panel .box-summary-card.tarima-card.active{opacity:1;transform:none}
-.tarima-vacia{padding:24px;color:#94a3b8;border:1px dashed rgba(148,163,184,.4);border-radius:10px}
-@media(max-width:700px){.tarima-panel{inset:70px 8px 60px;padding:10px}.tarima-cajas{grid-template-columns:1fr}}

@@ -434,3 +434,14 @@ Toda caja **nueva** se crea con `migracion:false` y funciona exactamente como si
 - **Eliminar rack** ya no borra las cajas pendientes (no están dentro del rack).
 - El número de caja sigue siendo único en todo el almacén, también contra las pendientes. Las
   etiquetas físicas no cambian (van por número de caja).
+
+---
+
+## Update: Solo rack A + Tarimas 1 a 4
+
+**Archivos modificados:** `app.js`, `rack3d.js`, `CAMBIOS.md` (sin cambios en Firestore ni en reglas).
+
+- **Solo el rack A está activo.** Los demás racks quedan inactivos (no se borra nada). Todo el material registrado en el rack A se dibuja en su posición, sin pasar por pendientes.
+- **Tarimas T1–T4**, vistas de frente: **Tarima 1 a la izquierda** del rack; **Tarimas 2, 3 y 4 a la derecha**. Cada una es una ubicación de 1 nivel y 1 slot (`T1-01-01-05`), así que se puede registrar y guardar material en todas (Registrar Entrada, Salida, Movimientos, 3D, Inventario, Historial, etiquetas). En el 3D, clic en la tarima abre directo sus cajas; en los selectores aparecen como "Tarima N" con nivel y slot ya seleccionados.
+- **Pendientes de registro** quedan después de las tarimas (a la derecha). Ahí está todo el material que no está en el rack A ni en una tarima (incluido el de racks inactivos); se acomoda como siempre desde un slot del rack A o desde una tarima.
+- Las tarimas no se administran en la tabla de Racks (están siempre activas, se definen en `app.js`: `TARIMAS_ALMACEN`; el rack activo en `RACKS_ACTIVOS_FIJOS`).

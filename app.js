@@ -107,6 +107,49 @@ function siguienteNumeroCaja(){
 }
 
 /* =====================
+CONFIGURACIÓN DEL ALMACÉN ACTIVO
+-------------------------------------------------------
+Solo el rack A está activo. Junto a él hay 4 tarimas:
+  - Tarima 1 a la IZQUIERDA del rack (vista de frente)
+  - Tarimas 2, 3 y 4 a la DERECHA del rack
+y después de ellas queda el área de "pendientes de acomodar".
+Cada tarima funciona como una ubicación de 1 nivel y 1 slot, así que se
+registra, guarda y consulta igual que cualquier slot (ubicación T1-01-01-05).
+No hay que crear nada en Firestore: las tarimas se agregan aquí en código.
+===================== */
+const RACKS_ACTIVOS_FIJOS = ["A"];
+const TARIMAS_ALMACEN = ["T1","T2","T3","T4"];
+
+function esRackTarima(nombre){
+  return TARIMAS_ALMACEN.includes(String(nombre ?? "").toUpperCase());
+}
+function esRackActivoFijo(nombre){
+  const n = String(nombre ?? "").toUpperCase();
+  return RACKS_ACTIVOS_FIJOS.includes(n) || TARIMAS_ALMACEN.includes(n);
+}
+/* nombre para mostrar: "Tarima 1" / "Rack A" */
+function nombreRack(nombre){
+  const n = String(nombre ?? "").toUpperCase();
+  return esRackTarima(n) ? "Tarima " + n.slice(1) : "Rack " + nombre;
+}
+window.esRackTarima = esRackTarima;
+window.nombreRack = nombreRack;
+
+/* Aplica la configuración a la lista de racks leída de Firestore:
+   solo el rack A queda activo y se agregan las tarimas (virtuales). */
+function aplicarConfigRacks(lista){
+  const reales = (lista || [])
+    .filter(r => !esRackTarima(r.nombre))
+    .map(r => RACKS_ACTIVOS_FIJOS.includes(String(r.nombre).toUpperCase())
+      ? { ...r, status:"active" }
+      : { ...r, status:"inactive", fijoInactivo:true });
+  const tarimas = TARIMAS_ALMACEN.map(t => ({
+    idDoc: t, nombre: t, niveles: 1, slots: 1, status: "active", tarima: true
+  }));
+  return reales.concat(tarimas).sort((a,b) => String(a.nombre).localeCompare(String(b.nombre), undefined, {numeric:true}));
+}
+
+/* =====================
 MATERIAL DE MIGRACIÓN (cajas pendientes de acomodar)
 -------------------------------------------------------
 Todas las cajas que ya existían antes de este cambio son material de
@@ -120,7 +163,13 @@ se muestran aparte (a un lado de los racks) como "pendientes de acomodar".
     ser pendiente.
 ===================== */
 function esCajaPendiente(c){
-  return !!c && c.migracion !== false && c.acomodada !== true;
+  if(!c) return false;
+  /* El rack A y las tarimas son las únicas ubicaciones activas: todo lo que
+     está registrado ahí se considera ya acomodado (no es pendiente). */
+  if(esRackActivoFijo(c.rack)) return false;
+  /* Todo lo demás (material de otros racks, de migración, etc.) queda como
+     pendiente de registro hasta que se acomode en el rack A o en una tarima. */
+  return true;
 }
 window.esCajaPendiente = esCajaPendiente;
 
@@ -778,8 +827,7 @@ async function loadRacks(force){
   if(!force && cacheRacks.length > 0) return cacheRacks;
 
   const snapshot = await getDocs(collection(db,"racks"));
-  cacheRacks = snapshot.docs.map(d => ({ idDoc:d.id, ...d.data() }));
-  cacheRacks.sort((a,b)=> a.nombre.localeCompare(b.nombre));
+  cacheRacks = aplicarConfigRacks(snapshot.docs.map(d => ({ idDoc:d.id, ...d.data() })));
 
   return cacheRacks;
 }
@@ -834,6 +882,13 @@ window.toggleRackStatus = async function(nombre){
     const rack = cacheRacks.find(r => r.nombre === nombre);
     if(!rack) return;
 
+    if(rack.tarima || rack.fijoInactivo){
+      alert(rack.tarima
+        ? "Las tarimas están siempre activas."
+        : "Por ahora solo el rack A está activo en el almacén.");
+      return;
+    }
+
     const nuevoStatus = rack.status === "active" ? "inactive" : "active";
 
     await updateDoc(doc(db,"racks",nombre), { status: nuevoStatus });
@@ -877,36 +932,6 @@ window.eliminarRack = async function(nombre){
 /* =====================
 CAJAS DENTRO DE UN SLOT (número manual)
 ===================== */
-
-window.crearCajaEnTarima = async function(numeroTarima){
-  await loadCajas(true);
-  const rack = `TARIMA ${Number(numeroTarima)}`;
-  const sugerido = siguienteNumeroCaja();
-  const entrada = prompt(`Número o etiqueta de la nueva caja para ${rack}:`, sugerido);
-  if(entrada === null) return null;
-  const cajaId = normCaja(entrada);
-  if(!cajaId){ alert("Número de caja inválido"); return null; }
-  if(cajaNumeroDuplicado(cajaId)){
-    alert(`Ya existe una caja "${cajaId}" en el almacén. Cada número de caja solo puede existir una vez.`);
-    return null;
-  }
-  const ubicacion = `TARIMA-${Number(numeroTarima)}-01-01-${cajaId}`;
-  try{
-    const cajaRef = doc(db,"cajas",ubicacion);
-    const cajaSnap = await getDoc(cajaRef);
-    if(cajaSnap.exists()){ alert("Ya existe una caja con esa ubicación"); return null; }
-    await setDoc(cajaRef, {
-      rack, nivel: 1, slot: 1, caja: cajaId, ubicacion,
-      componentes: [], migracion: false, tarima: Number(numeroTarima)
-    });
-    await loadCajas(true);
-    if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
-    if(window.Rack3D && typeof window.Rack3D.abrirTarima === "function") window.Rack3D.abrirTarima(Number(numeroTarima));
-    return ubicacion;
-  }catch(e){
-    console.error(e); alert("Error creando caja en la tarima"); return null;
-  }
-};
 
 window.crearCajaEnSlot = async function(rack, nivel, slot, opts){
 
@@ -1920,29 +1945,15 @@ window.renderRacksPage = async function(){
   if(!tablaRacks) return;
 
   await loadRacks();
-
-  // Esta configuración conserva todas las cajas y su contenido; solo ajusta
-  // el estado de los racks para dejar A como único rack activo.
-  if (isAdmin() && cacheRacks.some(r => r.nombre === "A")) {
-    let cambioEstado = false;
-    for (const rack of cacheRacks) {
-      const estadoDeseado = rack.nombre === "A" ? "active" : "inactive";
-      if (rack.status !== estadoDeseado) {
-        await updateDoc(doc(db, "racks", rack.nombre), { status: estadoDeseado });
-        cambioEstado = true;
-      }
-    }
-    if (cambioEstado) await loadRacks(true);
-  }
-
   await loadCajas();
 
-  if(contadorRacks) contadorRacks.innerText = cacheRacks.length;
+  const racksTabla = cacheRacks.filter(r => !r.tarima);   // las tarimas no son racks administrables
+  if(contadorRacks) contadorRacks.innerText = racksTabla.length;
 
   // ---- tabla de racks ----
   let html = "";
 
-  cacheRacks.forEach(r=>{
+  racksTabla.forEach(r=>{
 
     const cajasDelRack = cacheCajas.filter(c => c.rack === r.nombre && !esCajaPendiente(c));
     const totalCajas = cajasDelRack.length;
@@ -1961,7 +1972,7 @@ window.renderRacksPage = async function(){
 <td>${conContenido}/${totalCajas}</td>
 <td>${badge}</td>
 <td>
-<button class="btn-outline" onclick="toggleRackStatus('${r.nombre}')">${r.status === "active" ? "Desactivar" : "Activar"}</button>
+${r.fijoInactivo ? `<span style="color:var(--ink-soft);font-size:12px;">Material en pendientes</span>` : `<span style="color:var(--ink-soft);font-size:12px;">Activo</span>`}
 ${isAdmin() ? `<button class="btn-danger" onclick="eliminarRack('${r.nombre}')">🗑</button>` : ""}
 </td>
 </tr>`;
@@ -1977,7 +1988,7 @@ ${isAdmin() ? `<button class="btn-danger" onclick="eliminarRack('${r.nombre}')">
     cacheRacks.filter(r => r.status === "active").forEach(r=>{
 
       gridHtml += `<div class="rack-block">
-<div class="rack-block-head">📦 Rack ${r.nombre} <span>${r.niveles} niveles × ${r.slots} slots</span></div>`;
+<div class="rack-block-head">📦 ${nombreRack(r.nombre)} <span>${r.tarima ? "ubicación de tarima" : `${r.niveles} niveles × ${r.slots} slots`}</span></div>`;
 
       for(let n=1; n<=r.niveles; n++){
 
@@ -2048,10 +2059,8 @@ ${isAdmin() ? `<button class="slot-add slot-del" title="Eliminar caja" onclick="
     const infoCajas = document.getElementById("contadorCajas3D");
     if(infoCajas){
       const pendientes = cacheCajas.filter(esCajaPendiente);
-      const cajasEnRacks = cacheCajas.filter(c => !esCajaPendiente(c) && (
-        activos.some(r => r.nombre === c.rack) || /^TARIMA [1-4]$/.test(String(c.rack || ""))
-      ));
-      const cajasDelArea = cajasEnRacks.concat(pendientes);   // incluye racks, tarimas y material pendiente
+      const cajasEnRacks = cacheCajas.filter(c => !esCajaPendiente(c) && activos.some(r => r.nombre === c.rack));
+      const cajasDelArea = cajasEnRacks.concat(pendientes);   // el material pendiente también está físicamente en el área
       const totalCajas = cajasEnRacks.length;
 
       const materialesArea = new Set();
@@ -2158,7 +2167,7 @@ window.initUbicacionSelectors = async function(){
   const activos = cacheRacks.filter(r => r.status === "active");
 
   rackSelect.innerHTML = `<option value="">Seleccionar rack</option>` +
-    activos.map(r => `<option value="${r.nombre}">Rack ${r.nombre}</option>`).join("");
+    activos.map(r => `<option value="${r.nombre}">${nombreRack(r.nombre)}</option>`).join("");
 
   function actualizarCajas(){
 
@@ -2199,6 +2208,9 @@ window.initUbicacionSelectors = async function(){
       for(let s=1; s<=rack.slots; s++){
         slotSelect.innerHTML += `<option value="${s}">Slot ${pad2(s)}</option>`;
       }
+      /* una tarima tiene 1 nivel y 1 slot: se seleccionan solos */
+      if(Number(rack.niveles) === 1) nivelSelect.value = "1";
+      if(Number(rack.slots) === 1) slotSelect.value = "1";
     }
 
     actualizarCajas();
@@ -2263,7 +2275,7 @@ window.initSelectorGrupo = async function(ids){
   const activos = cacheRacks.filter(r => r.status === "active");
 
   rackSelect.innerHTML = `<option value="">Rack</option>` +
-    activos.map(r => `<option value="${r.nombre}">Rack ${r.nombre}</option>`).join("");
+    activos.map(r => `<option value="${r.nombre}">${nombreRack(r.nombre)}</option>`).join("");
 
   function actualizarNivelesSlots(){
     const rack = activos.find(r => r.nombre === rackSelect.value);
@@ -2279,6 +2291,9 @@ window.initSelectorGrupo = async function(ids){
       for(let s=1; s<=rack.slots; s++){
         slotSelect.innerHTML += `<option value="${s}">Slot ${pad2(s)}</option>`;
       }
+      /* una tarima tiene 1 nivel y 1 slot: se seleccionan solos */
+      if(Number(rack.niveles) === 1) nivelSelect.value = "1";
+      if(Number(rack.slots) === 1) slotSelect.value = "1";
     }
   }
 
@@ -3559,8 +3574,7 @@ function trIniciar(){
   });
 
   trEscuchar("racks", snap => {
-    cacheRacks = snap.docs.map(d => ({ idDoc:d.id, ...d.data() }));
-    cacheRacks.sort((a,b) => String(a.nombre).localeCompare(String(b.nombre)));
+    cacheRacks = aplicarConfigRacks(snap.docs.map(d => ({ idDoc:d.id, ...d.data() })));
   });
 
   trEscuchar("toolcrib", snap => {

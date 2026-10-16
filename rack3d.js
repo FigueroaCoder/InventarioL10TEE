@@ -107,10 +107,16 @@
      uniforme para que quepan dentro del slot (auto-ajustable).
   ===================== */
   const SLOT_AREA = { w: 0.50, d: 0.72, h: 0.64 };   // espacio útil de un slot
+  /* Tarimas: Tarima 1 a la izquierda del rack; Tarimas 2, 3 y 4 a la derecha. */
+  const TARIMA = { w: 1.0, d: 0.9, h: 0.12 };          // tarima (alto = cubierta donde se apoyan las cajas)
+  const TARIMA_AREA = { w: 0.9, d: 0.8, h: 0.95 };     // espacio útil para cajas sobre la tarima
+  const TARIMA_GAP = 0.45;                             // separación entre el rack y la tarima junto a él
+  const TARIMA_GAP_ENTRE = 0.3;                        // separación entre tarimas
   const CAJA_GAP_H = 0.014;   // separación horizontal/profundidad entre columnas (para que se vean distintas)
   const CAJA_GAP_V = 0;       // separación vertical: 0 = las cajas quedan literalmente pegadas, sin flotar
 
-  function planificarSlot(cajasSlot, slotX, yRepisa) {
+  function planificarSlot(cajasSlot, slotX, yRepisa, area) {
+    area = area || SLOT_AREA;
     const n = cajasSlot.length;
     if (n === 0) return { escala: 1, items: [] };
 
@@ -122,9 +128,9 @@
     // escala uniforme más grande con la que caben las n cajas
     let esc = 1, cols = 1, rows = 1, capas = 1;
     for (;;) {
-      cols  = Math.max(1, Math.floor(SLOT_AREA.w / (maxW * esc + CAJA_GAP_H)));
-      rows  = Math.max(1, Math.floor(SLOT_AREA.d / (maxD * esc + CAJA_GAP_H)));
-      capas = Math.max(1, Math.floor(SLOT_AREA.h / (maxH * esc + CAJA_GAP_V)));
+      cols  = Math.max(1, Math.floor(area.w / (maxW * esc + CAJA_GAP_H)));
+      rows  = Math.max(1, Math.floor(area.d / (maxD * esc + CAJA_GAP_H)));
+      capas = Math.max(1, Math.floor(area.h / (maxH * esc + CAJA_GAP_V)));
       if (cols * rows * capas >= n || esc <= 0.25) break;
       esc = Math.round((esc - 0.05) * 100) / 100;
     }
@@ -177,13 +183,13 @@
   /* =====================
      TEXTURAS
   ===================== */
-  function createFloorLabelTexture(text) {
+  function createFloorLabelTexture(text, fontPx) {
     const canvas = document.createElement('canvas');
     canvas.width = 256; canvas.height = 128;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0, 0, 256, 128);
     ctx.strokeStyle = '#000000'; ctx.lineWidth = 10; ctx.strokeRect(8, 8, 240, 112);
-    ctx.fillStyle = '#000000'; ctx.font = '900 44px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#000000'; ctx.font = '900 ' + (fontPx || 44) + 'px "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(text, 128, 64);
     return new THREE.CanvasTexture(canvas);
@@ -405,49 +411,54 @@
 
   function construir(racks, cajas) {
 
-    window.__rack3dCajasActuales = cajas || [];
     limpiarMundo();
 
     const activos = (racks || []).filter(r => r.status === "active");
+    const racksFis = activos.filter(r => !r.tarima);
+    const tarimas = activos.filter(r => r.tarima)
+      .sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), undefined, { numeric: true }));
+    const tarimaIzq = tarimas.filter(t => String(t.nombre).toUpperCase() === "T1");   // Tarima 1: a la izquierda del rack
+    const tarimasDer = tarimas.filter(t => String(t.nombre).toUpperCase() !== "T1");  // Tarimas 2, 3 y 4: a la derecha
 
     // cajas de migración pendientes de acomodar (no están en ningún slot todavía)
     const pend = (cajas || []).filter(esPend)
       .sort((a, b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, { numeric: true }));
     const medPend = medidasZonaPend(pend.length);
 
-    // --- piso y pared ---
-    const anchoRack = activos.reduce((acc, r) => acc + (Number(r.slots) || 1) * SLOT_W + GAP_RACKS, 0);
-    // Espacio fijo para Tarima 1 a la izquierda y Tarimas 2, 3 y 4 a la derecha.
-    const anchoTarimas = 2.2 + 3 * 1.45 + 1.2;
-    const anchoTotal = Math.max(
-      16,
-      anchoRack + anchoTarimas + (medPend ? medPend.w + 1.5 : 0)
-    );
+    // --- distribución a lo largo del almacén (vista de frente, X crece hacia la derecha) ---
+    const anchoRacks = racksFis.reduce((acc, r) => acc + (Math.max(1, parseInt(r.slots) || 1)) * SLOT_W + GAP_RACKS, 0);
+    const minX = tarimaIzq.length ? -(TARIMA_GAP + tarimaIzq.length * TARIMA.w + (tarimaIzq.length - 1) * TARIMA_GAP_ENTRE) : 0;
+    const anchoDer = tarimasDer.length ? TARIMA_GAP + tarimasDer.length * TARIMA.w + (tarimasDer.length - 1) * TARIMA_GAP_ENTRE : 0;
+    const finTarimasX = anchoRacks + anchoDer;
+    const pendX0 = finTarimasX + 0.7;                    // el área de pendientes queda DESPUÉS de las tarimas
+    const maxX = medPend ? pendX0 + medPend.w : finTarimasX;
+    const centroX = (minX + maxX) / 2;
+    const anchoMundo = Math.max(12, (maxX - minX) + 6);
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(anchoTotal + 10, 25), matFloor);
+    // --- piso y pared ---
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(anchoMundo + 10, 25), matFloor);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(anchoTotal / 4, 0, 0);
+    floor.position.set(centroX, 0, 0);
     floor.receiveShadow = true;
     worldGroup.add(floor);
     pisoMesh = floor;
 
     const wallZ = -0.55;
     const alturaPared = 8;
-    const backWall = new THREE.Mesh(new THREE.PlaneGeometry(anchoTotal + 10, alturaPared), sheetMat);
-    backWall.position.set(anchoTotal / 4, alturaPared / 2, wallZ);
+    const backWall = new THREE.Mesh(new THREE.PlaneGeometry(anchoMundo + 10, alturaPared), sheetMat);
+    backWall.position.set(centroX, alturaPared / 2, wallZ);
     backWall.receiveShadow = true;
     worldGroup.add(backWall);
 
     const spacing = 0.5;
-    const countRibs = Math.floor((anchoTotal + 10) / spacing);
+    const countRibs = Math.floor((anchoMundo + 10) / spacing);
     for (let i = 0; i < countRibs; i++) {
-      const posX = (anchoTotal / 4) - ((anchoTotal + 10) / 2) + i * spacing;
+      const posX = centroX - ((anchoMundo + 10) / 2) + i * spacing;
       const rib = new THREE.Mesh(new THREE.BoxGeometry(0.12, alturaPared, 0.05), sheetMat);
       rib.position.set(posX, alturaPared / 2, wallZ + 0.025);
       worldGroup.add(rib);
     }
 
-    if (activos.length === 0) return;
 
     let cursorX = 0;
     const paralesPuestos = [];
@@ -459,7 +470,7 @@
       worldGroup.add(buildUpright(x, altura));
     }
 
-    activos.forEach(rack => {
+    racksFis.forEach(rack => {
 
       const nNiveles = Math.max(1, parseInt(rack.niveles) || 1);
       const nSlots = Math.max(1, parseInt(rack.slots) || 1);
@@ -644,98 +655,206 @@
       cursorX += shelfWidth + GAP_RACKS;
     });
 
-    // --- TARIMAS DE ALMACENAMIENTO: 1 a la izquierda y 2–4 a la derecha ---
-    const tarimaW = 1.05, tarimaD = 0.82;
-    construirTarima(1, -1.55, tarimaW, tarimaD, cajas || []);
-    construirTarima(2, cursorX + 0.35, tarimaW, tarimaD, cajas || []);
-    construirTarima(3, cursorX + 1.65, tarimaW, tarimaD, cajas || []);
-    construirTarima(4, cursorX + 2.95, tarimaW, tarimaD, cajas || []);
+    // --- TARIMAS: la 1 a la izquierda del rack, la 2, 3 y 4 a la derecha ---
+    tarimaIzq.forEach((t, i) => {
+      const x0 = -(TARIMA_GAP + (tarimaIzq.length - i) * TARIMA.w + (tarimaIzq.length - 1 - i) * TARIMA_GAP_ENTRE);
+      construirTarima(t, x0, cajas);
+    });
+    tarimasDer.forEach((t, i) => {
+      const x0 = anchoRacks + TARIMA_GAP + i * (TARIMA.w + TARIMA_GAP_ENTRE);
+      construirTarima(t, x0, cajas);
+    });
 
-    // --- MATERIAL PENDIENTE DE REGISTRO / ACOMODO, después de las tarimas ---
-    const inicioPendientes = cursorX + 4.35;
-    const finLayout = inicioPendientes + (medPend ? medPend.w : 0);
-    const centroLayout = Math.max(1.2, (finLayout - 1.55) / 2);
-    const escalaVista = Math.max(1, finLayout / 7);
+    // --- ÁREA DE PENDIENTES (después de las tarimas) ---
+    const fv = Math.max(1, (maxX - minX) / 6);
     vistaGlobal = {
-      target: new THREE.Vector3(centroLayout, 1.0, 0),
-      pos: new THREE.Vector3(centroLayout + 4.6 * escalaVista, 3.2 * escalaVista, 8.5 * escalaVista)
+      target: new THREE.Vector3(centroX, 1.0, 0),
+      pos: new THREE.Vector3(centroX + 1.5 * fv, 1.2 + 3.0 * fv, 6.8 * fv)
     };
-    if (medPend) construirPendientes(pend, medPend, inicioPendientes);
+    if (medPend) construirPendientes(pend, medPend, pendX0);
   }
 
-  function construirTarima(numero, x0, w, d, cajas) {
-    const zCentro = 0.02;
-    const geo = new THREE.BoxGeometry(w, 0.08, d);
-    const base = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.78 }));
-    base.position.set(x0 + w / 2, 0.04, zCentro);
-    base.receiveShadow = true;
-    base.castShadow = true;
-    worldGroup.add(base);
+  /* Tarima: ubicación de 1 nivel y 1 slot (T1-01-01 ... T4-01-01) donde se registran cajas
+     igual que en un slot de rack. Al hacer clic se abre directo el slot de la tarima. */
+  function construirTarima(t, x0, cajas) {
 
-    // Tablas visibles para distinguir la tarima en la vista frontal.
-    for (let i = 1; i <= 3; i++) {
-      const tabla = new THREE.Mesh(
-        new THREE.BoxGeometry(0.045, 0.085, d + 0.015),
-        new THREE.MeshStandardMaterial({ color: 0xb77945, roughness: 0.82 })
-      );
-      tabla.position.set(x0 + (w * i / 4), 0.045, zCentro);
-      worldGroup.add(tabla);
+    const nombre = String(t.nombre).toUpperCase();
+    const numero = nombre.replace(/^T/, "");
+    const etiquetaTar = "TARIMA " + numero;
+    const cx = x0 + TARIMA.w / 2;
+    const yDeck = TARIMA.h;                          // cara superior de la tarima
+
+    const madera = new THREE.MeshStandardMaterial({ color: 0xb08850, roughness: 0.85 });
+    const maderaOsc = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.9 });
+
+    // cubierta superior (tablones) y base (largueros + tablones inferiores)
+    const nTablones = 6;
+    const anchoTab = (TARIMA.d - 0.05 * (nTablones - 1)) / nTablones;
+    for (let i = 0; i < nTablones; i++) {
+      const z = -TARIMA.d / 2 + anchoTab / 2 + i * (anchoTab + 0.05);
+      const tab = new THREE.Mesh(new THREE.BoxGeometry(TARIMA.w, 0.025, anchoTab), madera);
+      tab.position.set(cx, yDeck - 0.0125, z);
+      tab.receiveShadow = true; tab.castShadow = true;
+      worldGroup.add(tab);
     }
-    const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xfacc15 }));
-    edge.position.copy(base.position);
-    worldGroup.add(edge);
-
-    const sign = new THREE.Mesh(
-      new THREE.PlaneGeometry(w * 1.12, 0.28),
-      new THREE.MeshBasicMaterial({ map: createFloorLabelTexture(`TARIMA ${numero}`), transparent: true })
-    );
-    sign.rotation.x = -Math.PI / 2;
-    sign.position.set(x0 + w / 2, 0.006, zCentro + d / 2 + 0.22);
-    worldGroup.add(sign);
-
-    const cajasTarima = (cajas || []).filter(c => c.rack === `TARIMA ${numero}` && !esPend(c));
-    // Representación visual sencilla de las cajas almacenadas en la tarima.
-    cajasTarima.slice(0, 12).forEach((c, i) => {
-      const t = tamanoDeCaja(c).dims;
-      const cols = 3;
-      const px = x0 + 0.19 + (i % cols) * 0.28;
-      const pz = zCentro - 0.2 + Math.floor(i / cols) * 0.22;
-      const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(Math.min(t.w, 0.22), Math.min(t.h, 0.22), Math.min(t.d, 0.22)), matBoxSide);
-      boxMesh.position.set(px, 0.08 + Math.floor(i / 6) * 0.23 + Math.min(t.h,0.22)/2, pz);
-      boxMesh.castShadow = true;
-      boxMesh.userData = { type: 'tarima', data: { numero } };
-      worldGroup.add(boxMesh);
+    [-1, 0, 1].forEach(k => {
+      const larguero = new THREE.Mesh(new THREE.BoxGeometry(TARIMA.w, TARIMA.h - 0.05, 0.1), maderaOsc);
+      larguero.position.set(cx, 0.025 + (TARIMA.h - 0.05) / 2, k * (TARIMA.d / 2 - 0.07));
+      larguero.castShadow = true;
+      worldGroup.add(larguero);
     });
-    const hit = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 1.1, d + 0.08), new THREE.MeshBasicMaterial({ visible: false }));
-    hit.position.set(x0 + w / 2, 0.55, zCentro);
-    hit.userData = { type: 'tarima', data: { numero } };
+    [-1, 0, 1].forEach(k => {
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.025, TARIMA.d), maderaOsc);
+      base.position.set(cx + k * (TARIMA.w / 2 - 0.08), 0.0125, 0);
+      worldGroup.add(base);
+    });
+
+    // etiqueta en el piso, frente a la tarima
+    const labelMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.95, 0.5),
+      new THREE.MeshBasicMaterial({ map: createFloorLabelTexture(etiquetaTar, 34), transparent: true, opacity: 0.9 })
+    );
+    labelMesh.rotation.x = -Math.PI / 2;
+    labelMesh.position.set(cx, 0.005, TARIMA.d / 2 + 0.4);
+    worldGroup.add(labelMesh);
+
+    // slot de la tarima (1 nivel, 1 slot)
+    const slotCode = `${nombre}-01-01`;
+    const slotPos = new THREE.Vector3(cx, yDeck + 0.18, 0);
+    const slotHitbox = new THREE.Mesh(
+      new THREE.BoxGeometry(TARIMA.w, 0.9, TARIMA.d),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    slotHitbox.position.set(cx, yDeck + 0.45, 0);
+    worldGroup.add(slotHitbox);
+
+    const slotData = {
+      id: slotCode,
+      rackIndex: nombre,
+      level: 1,
+      slotIndex: 1,
+      tarima: true,
+      tarimaLabel: etiquetaTar,
+      position: slotPos,
+      hitbox: slotHitbox,
+      boxes: []
+    };
+
+    const cajasSlot = (cajas || []).filter(c =>
+      !esPend(c) &&
+      String(c.rack).toUpperCase() === nombre &&
+      Number(c.nivel) === 1 &&
+      Number(c.slot) === 1
+    ).sort((a, b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, { numeric: true }));
+
+    const plan = planificarSlot(cajasSlot, cx, yDeck, TARIMA_AREA);
+
+    cajasSlot.forEach((c, i) => {
+      const comps = c.componentes || [];
+      const bConfig = estadoDeCaja(c);
+      const tConfig = tamanoDeCaja(c);
+      const estadoManual = !!ESTADOS[String(c.estado || "").toLowerCase()];
+
+      const p = plan.items[i];
+      const dimsCaja = p.dims;
+      const etiqueta = String(c.caja || c.ubicacion);
+
+      const boxMaterials = [
+        matBoxSide, matBoxSide, matBoxSide, matBoxSide,
+        createFrontLabelMaterial(etiqueta, bConfig.color),
+        matBoxSide
+      ];
+      const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(dimsCaja.w, dimsCaja.h, dimsCaja.d), boxMaterials);
+      const homePos = new THREE.Vector3(p.x, p.y, p.z);
+      boxMesh.position.copy(homePos);
+      boxMesh.castShadow = true;
+      worldGroup.add(boxMesh);
+
+      const glowMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(dimsCaja.w * 1.08, dimsCaja.h * 1.08, dimsCaja.d * 1.08),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0 })
+      );
+      glowMesh.position.copy(homePos);
+      glowMesh.visible = false;
+      worldGroup.add(glowMesh);
+
+      const glowLight = new THREE.PointLight(0x38bdf8, 0, 1.2);
+      glowLight.position.copy(homePos);
+      worldGroup.add(glowLight);
+
+      const dashLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([homePos.clone(), homePos.clone()]),
+        new THREE.LineDashedMaterial({ color: 0x38bdf8, dashSize: 0.05, gapSize: 0.03 })
+      );
+      dashLine.visible = false;
+      worldGroup.add(dashLine);
+
+      const originTag = document.createElement('div');
+      originTag.className = 'origin-label';
+      originTag.innerText = etiquetaTar;
+      overlay.appendChild(originTag);
+
+      const boxData = {
+        id: c.ubicacion,
+        etiqueta,
+        slotCode,
+        rack: nombre,
+        nivel: 1,
+        slot: 1,
+        estado: bConfig.key,
+        estadoLabel: bConfig.label,
+        estadoManual,
+        tamano: tConfig.key,
+        tamanoLabel: tConfig.label,
+        visualEscala: plan.escala,
+        fly: { t: 0 },
+        stageElem: null,
+        homePos: homePos.clone(),
+        floatingPos: new THREE.Vector3(),
+        mesh: boxMesh,
+        glowMesh, glowLight, dashLine, originTag,
+        cardElem: null,
+        parentSlot: slotData,
+        capacidad: (typeof c.capacidad === "number") ? c.capacidad : null,
+        items: comps.map(x => ({
+          name: x.nombre,
+          pn: x.pn,
+          qty: Number(x.cantidad) || 0,
+          responsable: x.responsable,
+          comentarios: x.comentarios,
+          categoria: x.categoria || "",
+          espacio: Number(x.espacio) || 0
+        }))
+      };
+
+      boxMesh.userData = { type: 'box', data: boxData, parentSlot: slotData };
+      slotData.boxes.push(boxData);
+      allBoxes.push(boxData);
+      raycastTargets.push(boxMesh);
+    });
+
+    slotHitbox.userData = { type: 'slot', data: slotData };
+    raycastTargets.push(slotHitbox);
+
+    // zona clicable de toda la tarima (vista general): abre directo su slot
+    const altoZona = Math.max(0.7, plan.items.reduce((m, it) => Math.max(m, it.y + it.dims.h / 2), 0) + 0.15);
+    const hit = new THREE.Mesh(
+      new THREE.BoxGeometry(TARIMA.w + 0.1, altoZona, TARIMA.d + 0.1),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    hit.position.set(cx, altoZona / 2, 0);
+    hit.userData = { type: 'tarima', data: { slot: slotData, nombre, etiqueta: etiquetaTar } };
     worldGroup.add(hit);
     raycastTargets.push(hit);
-  }
 
-  function abrirTarima(numero) {
-    if (!overlay) return;
-    overlay.querySelectorAll('.tarima-panel').forEach(e => e.remove());
-    const n = Number(numero);
-    const cajas = (window.__rack3dCajasActuales || []).filter(c => c.rack === `TARIMA ${n}` && !esPend(c))
-      .sort((a,b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, {numeric:true}));
-    const panel = document.createElement('div');
-    panel.className = 'tarima-panel';
-    const cards = cajas.map(c => {
-      const box = {
-        id: c.ubicacion, etiqueta: String(c.caja || c.ubicacion), slotCode: `TARIMA ${n}`,
-        estado: estadoDeCaja(c).key, tamano: tamanoDeCaja(c).key,
-        items: (c.componentes || []).map(x => ({name:x.nombre, pn:x.pn, qty:Number(x.cantidad)||0, categoria:x.categoria||''}))
-      };
-      return `<div class="tarima-caja"><div class="box-summary-card tarima-card">${cardHtml(box)}</div></div>`;
-    }).join('');
-    panel.innerHTML = `<div class="tarima-head"><div><b>📦 TARIMA ${n}</b><div>${cajas.length} caja(s) registrada(s)</div></div><button class="pend-x" onclick="Rack3D.cerrarTarima()" title="Cerrar">✕</button></div><div class="tarima-actions"><button class="btn-mini" onclick="Rack3D.crearCajaTarima(${n})">+ Crear caja en tarima ${n}</button></div><div class="tarima-cajas">${cards || '<p class="tarima-vacia">Esta tarima está vacía. Crea una caja para comenzar a registrar material.</p>'}</div>`;
-    overlay.appendChild(panel);
-  }
-
-  function cerrarTarima() { if (overlay) overlay.querySelectorAll('.tarima-panel').forEach(e => e.remove()); }
-  async function crearCajaTarima(numero) {
-    if (typeof window.crearCajaEnTarima === 'function') await window.crearCajaEnTarima(numero);
+    // letrero en la pared con el nombre y el total de cajas
+    const nTxt = cajasSlot.length + (cajasSlot.length === 1 ? " CAJA" : " CAJAS");
+    const letrero = new THREE.Mesh(
+      new THREE.PlaneGeometry(TARIMA.w, TARIMA.w * 160 / 512),
+      new THREE.MeshBasicMaterial({ map: createSignTexture(etiquetaTar, nTxt) })
+    );
+    letrero.position.set(cx, 1.25, -0.5);
+    worldGroup.add(letrero);
   }
 
   function construirPendientes(pend, med, x0) {
@@ -943,10 +1062,10 @@
     const data = hoveredObject.userData.data;
 
     if (type === 'box') inspectSingleBox(data);
-    else if (type === 'tarima') abrirTarima(data.numero);
     else if (type === 'pzone') zoomToPendientes();
     else if (type === 'pbox') { if (!enPendientes) zoomToPendientes(); abrirPanelPend(data.etiqueta); enfocarPendiente(data.etiqueta); }
     else if (currentLevel === 0 && type === 'rack') zoomToRack(data);
+    else if (currentLevel === 0 && type === 'tarima') zoomToSlotAndSpreadBoxes(data.slot);
     else if (currentLevel === 1 && type === 'slot') zoomToSlotAndSpreadBoxes(data);
   }
 
@@ -1157,7 +1276,7 @@
         <div class="pend-dialog-title">Confirmar acomodo de caja</div>
         <div class="pend-dest">
           CAJA <b>${esc(info.caja)}</b> &nbsp;→&nbsp; <b>${esc(slot.id)}</b>
-          <small>Rack ${esc(slot.rackIndex)} · Nivel ${pad2(slot.level)} · Slot ${pad2(slot.slotIndex)}</small>
+          <small>${slot.tarima ? esc(slot.tarimaLabel) : 'Rack ' + esc(slot.rackIndex) + ' · Nivel ' + pad2(slot.level) + ' · Slot ' + pad2(slot.slotIndex)}</small>
         </div>
         <div class="pend-contents-title">Contenido registrado de esta caja</div>
         <div class="pend-contents">${filas || '<span class="pend-vacia">Caja vacía (sin material registrado)</span>'}</div>
@@ -1213,8 +1332,12 @@
 
     renderSlotBoxes();
 
-    hud(`Slot ${slot.id}`, "Gestión de cajas e inventario en tiempo real.",
-      `RACK ${slot.rackIndex} > NIVEL ${pad2(slot.level)} > SLOT ${pad2(slot.slotIndex)}`);
+    if (slot.tarima) {
+      hud(slot.tarimaLabel.charAt(0) + slot.tarimaLabel.slice(1).toLowerCase(), "Gestión de cajas e inventario en tiempo real.", slot.tarimaLabel);
+    } else {
+      hud(`Slot ${slot.id}`, "Gestión de cajas e inventario en tiempo real.",
+        `RACK ${slot.rackIndex} > NIVEL ${pad2(slot.level)} > SLOT ${pad2(slot.slotIndex)}`);
+    }
 
     vistaGuardada = { level: 2, slot: slot.id };
   }
@@ -1990,7 +2113,7 @@
       }
       if (!slotEncontrado) return;
 
-      const rack = racksData.find(r => r.rackIndex === slotEncontrado.rackIndex);
+      const rack = slotEncontrado.tarima ? null : racksData.find(r => r.rackIndex === slotEncontrado.rackIndex);
       if (rack) zoomToRack(rack);
       zoomToSlotAndSpreadBoxes(slotEncontrado);
 
@@ -2053,9 +2176,6 @@
     crearCaja,
     eliminarCaja: eliminarCajaProxy,
     abrirEntrada,
-    abrirTarima,
-    cerrarTarima,
-    crearCajaTarima,
     buscarPendiente,
     confirmarPendiente,
     cancelarPendiente,
