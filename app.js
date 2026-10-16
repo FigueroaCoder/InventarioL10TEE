@@ -2348,8 +2348,11 @@ window.buscarOcurrenciasMaterial = async function(query){
       const pn = String(comp.pn || "");
       const matchNombre = nombre.toLowerCase().includes(query) ||
         (pn && pn.toLowerCase() !== "no aplica" && pn.toLowerCase().includes(query));
-      const matchCaja = String(c.ubicacion || "").toLowerCase().includes(query) ||
-        String(c.caja || "").toLowerCase().includes(query);
+      const numCaja = parseConsultaCaja(query);
+      const matchCaja = numCaja !== null
+        ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
+        : (String(c.ubicacion || "").toLowerCase().includes(query) ||
+           String(c.caja || "").toLowerCase().includes(query));
 
       if(matchNombre || matchCaja){
         resultados.push({
@@ -2631,6 +2634,17 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
    (material y cantidad) al Tool Crib, con o sin la caja.
    ===================== */
 
+/* Consulta tipo "CAJA 20" / "caja20" / "cj 20" / "caja #20": devuelve el número de caja
+   normalizado ("20", "05", "A-5") o null si el texto no tiene esa forma. */
+function parseConsultaCaja(q){
+  const m = String(q || "").trim().match(/^(?:caja|cj|box)\s*#?\s*([^\s]+)$/i);
+  return m ? normEtiquetaCajaBusqueda(m[1]) : null;
+}
+function normEtiquetaCajaBusqueda(t){
+  t = String(t ?? "").trim().toUpperCase().replace(/[\/\\]/g,"-");
+  return /^\d+$/.test(t) ? String(parseInt(t,10)).padStart(2,"0") : t;
+}
+
 /* Busca cajas por número de caja o ubicación (también las pendientes de acomodar). */
 window.buscarCajasToolCrib = async function(query){
 
@@ -2639,10 +2653,13 @@ window.buscarCajasToolCrib = async function(query){
   query = String(query || "").toLowerCase().trim();
   if(!query) return [];
 
+  const numCaja = parseConsultaCaja(query);   // "CAJA 20" → solo la caja 20
+
   return cacheCajas
-    .filter(c =>
-      String(c.ubicacion || "").toLowerCase().includes(query) ||
-      String(c.caja || "").toLowerCase().includes(query))
+    .filter(c => numCaja !== null
+      ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
+      : (String(c.ubicacion || "").toLowerCase().includes(query) ||
+         String(c.caja || "").toLowerCase().includes(query)))
     .sort((a,b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, {numeric:true}))
     .slice(0, 30)
     .map(c => ({

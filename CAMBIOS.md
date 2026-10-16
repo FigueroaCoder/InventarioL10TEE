@@ -461,3 +461,7 @@ En **Movimientos → Material a Tool Crib**:
   - *Con caja:* avisa que el material restante **queda sin caja** y pide en ese momento reasignarlo a otra caja (número o ubicación). Si se cancela, no se cambia nada.
 - Todo se guarda en una sola operación (Tool Crib, caja de origen y caja de reasignación juntas) y queda en Historial (`ENVIO TOOL CRIB` y, si hubo reasignación, `MOVIMIENTO MATERIAL`).
 - El envío por material individual de siempre sigue funcionando igual.
+
+### Búsqueda literal de cajas ("CAJA 20")
+- Escribir `CAJA 20` (también `caja20`, `cj 20`, `caja #20`) encuentra exactamente esa caja, en el **buscador del 3D** (la hace parpadear y salir al frente, también en tarimas y pendientes) y en los buscadores de **Movimientos** (Tool Crib, material entre cajas, Scrap). `CAJA 2` coincide con la caja 02, no con la 20.
+- Archivos: `app.js`, `rack3d.js`.

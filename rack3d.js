@@ -1801,7 +1801,12 @@
     }
 
     const encontrados = new Set();
+    const numCajaBuscada = parseConsultaCaja(query);
     allBoxes.forEach(b => {
+      if (numCajaBuscada !== null) {
+        if (normEtiquetaCaja(b.etiqueta) === numCajaBuscada) encontrados.add("CAJA " + b.etiqueta);
+        return;
+      }
       b.items.forEach(i => {
         const n = String(i.name || "");
         const p = String(i.pn || "");
@@ -1816,7 +1821,9 @@
       encontrados.forEach(prod => {
         const itemDiv = document.createElement('div');
         itemDiv.className = 'suggestion-item';
-        const boxCount = allBoxes.filter(b =>
+        const boxCount = /^CAJA /.test(prod) && numCajaBuscada !== null
+          ? allBoxes.filter(b => coincide(b, prod.toLowerCase())).length
+          : allBoxes.filter(b =>
           b.items.some(i => i.name === prod) || b.id === prod || (b.pendiente && b.etiqueta === prod)).length;
         itemDiv.innerHTML = `<span>${esc(prod)}</span> <small style="color:#38bdf8">${boxCount} caja(s)</small>`;
         itemDiv.onclick = () => {
@@ -1841,7 +1848,19 @@
     startBlinkingAndPullFront(query);
   }
 
+  /* "CAJA 20" / "caja20" → número de caja normalizado; null si la consulta no tiene esa forma */
+  function normEtiquetaCaja(t) {
+    t = String(t == null ? "" : t).trim().toUpperCase().replace(/[\/\\]/g, "-");
+    return /^\d+$/.test(t) ? String(parseInt(t, 10)).padStart(2, "0") : t;
+  }
+  function parseConsultaCaja(q) {
+    const m = String(q || "").trim().match(/^(?:caja|cj|box)\s*#?\s*([^\s]+)$/i);
+    return m ? normEtiquetaCaja(m[1]) : null;
+  }
+
   function coincide(box, query) {
+    const numCaja = parseConsultaCaja(query);
+    if (numCaja !== null) return normEtiquetaCaja(box.etiqueta) === numCaja;   // búsqueda literal "CAJA 20"
     const idTxt = box.pendiente ? box.etiqueta : box.id;   // la ubicación provisional de una caja pendiente no cuenta
     if (String(idTxt).toLowerCase().includes(query)) return true;
     return box.items.some(i =>
