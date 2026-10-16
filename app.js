@@ -2333,7 +2333,7 @@ window.leerRackNivelSlot = function(ids){
    1) BUSCADOR GLOBAL DE MATERIALES (por nombre, PN o número de caja)
    Usado tanto por "Movimiento entre cajas" como por "Tool Crib".
    ===================== */
-window.buscarOcurrenciasMaterial = async function(query){
+window.buscarOcurrenciasMaterial = async function(query, soloMaterial){
 
   await loadCajas();
 
@@ -2349,7 +2349,7 @@ window.buscarOcurrenciasMaterial = async function(query){
       const matchNombre = nombre.toLowerCase().includes(query) ||
         (pn && pn.toLowerCase() !== "no aplica" && pn.toLowerCase().includes(query));
       const numCaja = parseConsultaCaja(query);
-      const matchCaja = numCaja !== null
+      const matchCaja = soloMaterial === true ? false : numCaja !== null
         ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
         : (String(c.ubicacion || "").toLowerCase().includes(query) ||
            String(c.caja || "").toLowerCase().includes(query));
@@ -2646,22 +2646,22 @@ function normEtiquetaCajaBusqueda(t){
 }
 
 /* Busca cajas por número de caja o ubicación (también las pendientes de acomodar). */
-window.buscarCajasToolCrib = async function(query){
+window.buscarCajasToolCrib = async function(query, listarTodas){
 
   await loadCajas();
 
   query = String(query || "").toLowerCase().trim();
-  if(!query) return [];
+  if(!query && listarTodas !== true) return [];
 
   const numCaja = parseConsultaCaja(query);   // "CAJA 20" → solo la caja 20
 
   return cacheCajas
-    .filter(c => numCaja !== null
+    .filter(c => !query ? true : numCaja !== null
       ? normEtiquetaCajaBusqueda(c.caja || "") === numCaja
       : (String(c.ubicacion || "").toLowerCase().includes(query) ||
          String(c.caja || "").toLowerCase().includes(query)))
     .sort((a,b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, {numeric:true}))
-    .slice(0, 30)
+    .slice(0, query ? 30 : 300)
     .map(c => ({
       ubicacion: c.ubicacion,
       caja: c.caja || c.ubicacion,

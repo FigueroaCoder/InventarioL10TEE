@@ -43,6 +43,7 @@ body.loaded{ opacity:1; }
 .mov-resultado-item b{ color:#fff; }
 .mov-resultado-item small{ color:var(--amber); font-family:var(--font-mono); white-space:nowrap; }
 
+.crib-filtro{ margin-bottom:10px; }
 .crib-caja-head{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:6px 0 8px; color:var(--ink-soft); font-size:13px; }
 .crib-caja-head .btn-outline{ margin-left:6px; }
 .crib-caja-lista{ border:1.5px solid var(--panel-line); border-radius:var(--radius-sm); background:var(--panel); max-height:300px; overflow-y:auto; }
@@ -233,9 +234,16 @@ se te pregunta si va con caja o no; si va con caja y queda material, ese materia
 y se te pedirá reasignarlo a otra caja.
 </p>
 
-<label>Buscar caja o material de origen</label>
+<label>Buscar por</label>
+<div class="radio-group crib-filtro">
+<label><input type="radio" name="cribFiltro" value="todo" checked onchange="cribCambiarFiltro()"> Todo</label>
+<label><input type="radio" name="cribFiltro" value="caja" onchange="cribCambiarFiltro()"> 📦 Solo cajas</label>
+<label><input type="radio" name="cribFiltro" value="material" onchange="cribCambiarFiltro()"> 🔩 Solo material</label>
+</div>
+
+<label id="cribBuscarLabel">Buscar caja o material de origen</label>
 <div class="mov-buscar-wrap">
-<input class="buscador" id="cribBuscar" placeholder="Ej. caja 06, A-01-01-02, guante nitrilo, PN-1234..." autocomplete="off" oninput="buscarMaterialToolCrib()">
+<input class="buscador" id="cribBuscar" placeholder="Ej. caja 06, A-01-01-02, guante nitrilo, PN-1234..." autocomplete="off" oninput="buscarMaterialToolCrib()" onfocus="buscarMaterialToolCrib()">
 <div id="cribResultados" class="mov-resultados"></div>
 </div>
 
@@ -545,15 +553,18 @@ async function buscarMaterialToolCrib(){
   const cont = document.getElementById("cribResultados");
 
   const q = input.value.trim();
-  if(!q || typeof window.buscarOcurrenciasMaterial !== "function"){
+  const filtro = cribFiltroActual();
+
+  /* con "Solo cajas" y sin texto se listan todas las cajas para elegir */
+  if((!q && filtro !== "caja") || typeof window.buscarOcurrenciasMaterial !== "function"){
     cont.classList.remove("visible");
     cont.innerHTML = "";
     return;
   }
 
   const [cajas, resultados] = await Promise.all([
-    typeof window.buscarCajasToolCrib === "function" ? window.buscarCajasToolCrib(q) : [],
-    window.buscarOcurrenciasMaterial(q)
+    (filtro !== "material" && typeof window.buscarCajasToolCrib === "function") ? window.buscarCajasToolCrib(q, filtro === "caja") : [],
+    (filtro !== "caja" && q) ? window.buscarOcurrenciasMaterial(q, filtro === "material") : []
   ]);
 
   if(input.value.trim() !== q) return;   // llegó una búsqueda más nueva
@@ -597,6 +608,24 @@ async function buscarMaterialToolCrib(){
   }
 
   cont.classList.add("visible");
+}
+
+function cribFiltroActual(){
+  const r = document.querySelector('input[name="cribFiltro"]:checked');
+  return r ? r.value : "todo";
+}
+
+function cribCambiarFiltro(){
+  const f = cribFiltroActual();
+  const input = document.getElementById("cribBuscar");
+  input.placeholder =
+    f === "caja" ? "Número o ubicación de caja (ej. CAJA 20, A-01-01-02) — vacío = ver todas" :
+    f === "material" ? "Nombre o PN del material (ej. guante nitrilo, PN-1234)" :
+    "Ej. caja 06, A-01-01-02, guante nitrilo, PN-1234...";
+  document.getElementById("cribBuscarLabel").innerText =
+    f === "caja" ? "Buscar caja" : f === "material" ? "Buscar material" : "Buscar caja o material de origen";
+  input.focus();
+  buscarMaterialToolCrib();
 }
 
 function cribMostrarModo(modo){

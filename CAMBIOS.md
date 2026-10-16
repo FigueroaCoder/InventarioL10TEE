@@ -465,3 +465,9 @@ En **Movimientos → Material a Tool Crib**:
 ### Búsqueda literal de cajas ("CAJA 20")
 - Escribir `CAJA 20` (también `caja20`, `cj 20`, `caja #20`) encuentra exactamente esa caja, en el **buscador del 3D** (la hace parpadear y salir al frente, también en tarimas y pendientes) y en los buscadores de **Movimientos** (Tool Crib, material entre cajas, Scrap). `CAJA 2` coincide con la caja 02, no con la 20.
 - Archivos: `app.js`, `rack3d.js`.
+
+### Filtro de búsqueda en Tool Crib: Todo / Solo cajas / Solo material
+- En **Movimientos → Material a Tool Crib** hay un selector "Buscar por": **Todo** (cajas y material, como antes), **📦 Solo cajas** y **🔩 Solo material**.
+- **Solo cajas:** busca por número o ubicación (`CAJA 20`, `A-01-01-02`); con el campo vacío al hacer clic se listan **todas las cajas** para elegir.
+- **Solo material:** busca únicamente por nombre o PN (no se mezclan resultados de cajas).
+- Archivos: `movimientos.html`, `app.js`.
