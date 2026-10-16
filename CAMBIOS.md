@@ -445,3 +445,19 @@ Toda caja **nueva** se crea con `migracion:false` y funciona exactamente como si
 - **Tarimas T1–T4**, vistas de frente: **Tarima 1 a la izquierda** del rack; **Tarimas 2, 3 y 4 a la derecha**. Cada una es una ubicación de 1 nivel y 1 slot (`T1-01-01-05`), así que se puede registrar y guardar material en todas (Registrar Entrada, Salida, Movimientos, 3D, Inventario, Historial, etiquetas). En el 3D, clic en la tarima abre directo sus cajas; en los selectores aparecen como "Tarima N" con nivel y slot ya seleccionados.
 - **Pendientes de registro** quedan después de las tarimas (a la derecha). Ahí está todo el material que no está en el rack A ni en una tarima (incluido el de racks inactivos); se acomoda como siempre desde un slot del rack A o desde una tarima.
 - Las tarimas no se administran en la tabla de Racks (están siempre activas, se definen en `app.js`: `TARIMAS_ALMACEN`; el rack activo en `RACKS_ACTIVOS_FIJOS`).
+
+---
+
+## Update: Tool Crib por caja completa o parcial
+
+**Archivos modificados:** `app.js`, `movimientos.html`, `CAMBIOS.md` (sin cambios en Firestore ni reglas).
+
+En **Movimientos → Material a Tool Crib**:
+- El buscador ahora encuentra **cajas** (por número o ubicación) además de materiales.
+- Al elegir una caja se muestra **todo su material** (con PN y cantidad) como confirmación. Cada material tiene casilla y cantidad editable: se puede enviar solo una parte, o "Seleccionar toda la caja".
+- **Caja completa** (todo el material, todas las piezas): avisa que se enviará **con todo y caja**. Confirmar la manda con caja; hay una opción para mandar solo el material y conservar la caja vacía.
+- **Parte del material:** pregunta si se manda **con caja o sin caja**.
+  - *Sin caja:* la caja se queda en su lugar con lo que no se envió.
+  - *Con caja:* avisa que el material restante **queda sin caja** y pide en ese momento reasignarlo a otra caja (número o ubicación). Si se cancela, no se cambia nada.
+- Todo se guarda en una sola operación (Tool Crib, caja de origen y caja de reasignación juntas) y queda en Historial (`ENVIO TOOL CRIB` y, si hubo reasignación, `MOVIMIENTO MATERIAL`).
+- El envío por material individual de siempre sigue funcionando igual.

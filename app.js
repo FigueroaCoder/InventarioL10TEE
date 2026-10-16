@@ -2624,6 +2624,235 @@ window.enviarATooCrib = async function(ubicacionOrigen, nombreMaterial, cantidad
 
 };
 
+/* =====================
+   TOOL CRIB POR CAJA
+   -------------------------------------------------------
+   Permite buscar una caja, ver su material y enviar TODO o solo una parte
+   (material y cantidad) al Tool Crib, con o sin la caja.
+   ===================== */
+
+/* Busca cajas por número de caja o ubicación (también las pendientes de acomodar). */
+window.buscarCajasToolCrib = async function(query){
+
+  await loadCajas();
+
+  query = String(query || "").toLowerCase().trim();
+  if(!query) return [];
+
+  return cacheCajas
+    .filter(c =>
+      String(c.ubicacion || "").toLowerCase().includes(query) ||
+      String(c.caja || "").toLowerCase().includes(query))
+    .sort((a,b) => String(a.caja || a.ubicacion).localeCompare(String(b.caja || b.ubicacion), undefined, {numeric:true}))
+    .slice(0, 30)
+    .map(c => ({
+      ubicacion: c.ubicacion,
+      caja: c.caja || c.ubicacion,
+      pendiente: esCajaPendiente(c),
+      materiales: (c.componentes || []).length,
+      piezas: (c.componentes || []).reduce((t,x) => t + (Number(x.cantidad)||0), 0)
+    }));
+};
+
+/* Contenido actual (fresco) de una caja, para confirmar qué material tiene. */
+window.getDetalleCaja = async function(ubicacion){
+
+  await loadCajas(true);
+
+  const c = cacheCajas.find(x => x.ubicacion === ubicacion);
+  if(!c) return null;
+
+  return {
+    ubicacion: c.ubicacion,
+    caja: c.caja || c.ubicacion,
+    pendiente: esCajaPendiente(c),
+    componentes: (c.componentes || []).map(x => ({
+      nombre: x.nombre,
+      pn: x.pn || "NO APLICA",
+      cantidad: Number(x.cantidad) || 0
+    }))
+  };
+};
+
+/* Cajas a las que se puede reasignar material (cajas ya acomodadas, distintas de la de origen). */
+window.getCajasParaReasignar = async function(ubicacionExcluida){
+
+  await loadCajas(true);
+
+  return cacheCajas
+    .filter(c => !esCajaPendiente(c) && c.ubicacion !== ubicacionExcluida)
+    .sort((a,b) => String(a.ubicacion).localeCompare(String(b.ubicacion), undefined, {numeric:true}))
+    .map(c => ({
+      ubicacion: c.ubicacion,
+      caja: c.caja || c.ubicacion,
+      materiales: (c.componentes || []).length
+    }));
+};
+
+/* Envía material de una caja al Tool Crib en una sola operación atómica.
+     seleccion          → [{ nombre, cantidad }] lo que se envía
+     conCaja            → true: la caja también se va al Tool Crib (se borra del rack)
+     ubicacionReasignar → caja destino del material que NO se envía cuando conCaja=true
+                          (ese material queda sin caja y debe reasignarse) */
+window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, ubicacionReasignar, comentarios){
+
+  comentarios = (comentarios || "").trim() || "NO APLICA";
+  conCaja = conCaja === true;
+
+  if(!ubicacionOrigen || !Array.isArray(seleccion) || seleccion.length === 0){
+    alert("Selecciona al menos un material para enviar");
+    return false;
+  }
+
+  try{
+
+    const origenRef = doc(db,"cajas",ubicacionOrigen);
+    const origenSnap = await getDoc(origenRef);
+    if(!origenSnap.exists()){ alert("La caja de origen ya no existe"); return false; }
+
+    const compsOrigen = origenSnap.data().componentes || [];
+
+    const pedido = new Map();
+    for(const s of seleccion){
+      const q = parseInt(s.cantidad);
+      if(isNaN(q) || q <= 0){ alert(`Cantidad inválida para ${s.nombre}`); return false; }
+      pedido.set(String(s.nombre).toLowerCase(), q);
+    }
+
+    const enviados = [];
+    const restantes = [];
+
+    for(const c of compsOrigen){
+      const disp = Number(c.cantidad) || 0;
+      const q = pedido.get(String(c.nombre).toLowerCase()) || 0;
+      if(q > disp){ alert(`Sin stock suficiente de ${c.nombre}. Disponible: ${disp}`); return false; }
+      if(q > 0) enviados.push({ comp:c, cantidad:q });
+      if(disp - q > 0) restantes.push({ ...c, cantidad: disp - q });
+    }
+
+    if(enviados.length !== pedido.size){
+      alert("Alguno de los materiales ya no está en la caja. Vuelve a seleccionar la caja.");
+      return false;
+    }
+
+    const debeReasignar = conCaja && restantes.length > 0;
+    let destRef = null, destSnap = null;
+
+    if(debeReasignar){
+      if(!ubicacionReasignar || ubicacionReasignar === ubicacionOrigen){
+        alert("Indica a qué otra caja se reasignará el material que queda sin caja");
+        return false;
+      }
+      destRef = doc(db,"cajas",ubicacionReasignar);
+      destSnap = await getDoc(destRef);
+      if(!destSnap.exists()){ alert("La caja de reasignación ya no existe"); return false; }
+    }
+
+    const lote = writeBatch(db);
+    const fecha = new Date().toLocaleString();
+
+    // --- Tool Crib: se suma por material ---
+    for(const e of enviados){
+      const key = claveMaterial(e.comp.nombre);
+      const cribRef = doc(db,"toolcrib",key);
+      const cribSnap = await getDoc(cribRef);
+      const pn = e.comp.pn || "NO APLICA";
+
+      if(cribSnap.exists()){
+        lote.update(cribRef, {
+          cantidad: (cribSnap.data().cantidad || 0) + e.cantidad,
+          pn: (pn && pn !== "NO APLICA") ? pn : (cribSnap.data().pn || "NO APLICA"),
+          ultimaUbicacion: ubicacionOrigen,
+          responsable: getUser(),
+          comentarios,
+          fecha
+        });
+      } else {
+        lote.set(cribRef, {
+          nombre: e.comp.nombre, pn, cantidad: e.cantidad,
+          ultimaUbicacion: ubicacionOrigen,
+          responsable: getUser(),
+          comentarios,
+          fecha
+        });
+      }
+    }
+
+    // --- caja de origen ---
+    if(conCaja){
+      lote.delete(origenRef);
+    } else {
+      lote.update(origenRef, { componentes: restantes });
+    }
+
+    // --- material que queda sin caja → reasignado a otra caja ---
+    if(debeReasignar){
+      const compsDest = destSnap.data().componentes || [];
+      restantes.forEach(r => {
+        const i = compsDest.findIndex(x => String(x.nombre).toLowerCase() === String(r.nombre).toLowerCase());
+        if(i >= 0){
+          compsDest[i].cantidad = (Number(compsDest[i].cantidad)||0) + r.cantidad;
+          compsDest[i].responsable = getUser();
+        } else {
+          compsDest.push({ ...r, responsable: getUser() });
+        }
+      });
+      lote.update(destRef, { componentes: compsDest });
+    }
+
+    await lote.commit();
+
+    // --- historial ---
+    const cajaCompleta = conCaja && restantes.length === 0;
+    for(const e of enviados){
+      await addHist({
+        ts: Date.now(), sid: SESION_ID, fecha,
+        accion: "ENVIO TOOL CRIB",
+        ubicacion: ubicacionOrigen,
+        nombre: e.comp.nombre,
+        cantidad: e.cantidad,
+        responsable: getUser(),
+        comentarios: comentarios + (conCaja ? " · ENVIADO CON CAJA" : "") + (cajaCompleta ? " (CAJA COMPLETA)" : "")
+      });
+    }
+    if(debeReasignar){
+      for(const r of restantes){
+        await addHist({
+          ts: Date.now(), sid: SESION_ID, fecha,
+          accion: "MOVIMIENTO MATERIAL",
+          ubicacion: `${ubicacionOrigen} → ${ubicacionReasignar}`,
+          nombre: r.nombre,
+          cantidad: r.cantidad,
+          responsable: getUser(),
+          comentarios: "Reasignado: la caja de origen se envió a Tool Crib"
+        });
+      }
+    }
+
+    await loadCajas(true);
+    await loadToolCrib(true);
+    if(typeof window.showStock === "function") await window.showStock(true);
+    if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+    if(typeof window.renderToolCrib === "function") await window.renderToolCrib(true);
+
+    const piezas = enviados.reduce((t,e) => t + e.cantidad, 0);
+    alert(
+      (cajaCompleta
+        ? `La caja ${ubicacionOrigen} se envió a Tool Crib con todo su material (${piezas} pzs).`
+        : `${piezas} pzs enviadas a Tool Crib desde ${ubicacionOrigen}` +
+          (conCaja ? ` junto con la caja.` : `. La caja se conservó en su lugar.`)) +
+      (debeReasignar ? `\nEl material restante se reasignó a ${ubicacionReasignar}.` : "")
+    );
+    return true;
+
+  }catch(e){
+    console.error(e);
+    alert("Error enviando la caja a Tool Crib");
+    return false;
+  }
+
+};
+
 /* Regresar material del Tool Crib al almacén — total o parcial — hacia
    una caja ya existente o hacia una caja nueva (rack/nivel/slot elegidos). */
 window.regresarDeToolCrib = async function(nombreMaterial, cantidad, destino){

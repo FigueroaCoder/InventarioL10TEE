@@ -43,6 +43,25 @@ body.loaded{ opacity:1; }
 .mov-resultado-item b{ color:#fff; }
 .mov-resultado-item small{ color:var(--amber); font-family:var(--font-mono); white-space:nowrap; }
 
+.crib-caja-head{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:6px 0 8px; color:var(--ink-soft); font-size:13px; }
+.crib-caja-head .btn-outline{ margin-left:6px; }
+.crib-caja-lista{ border:1.5px solid var(--panel-line); border-radius:var(--radius-sm); background:var(--panel); max-height:300px; overflow-y:auto; }
+.crib-fila{ display:grid; grid-template-columns:auto 1fr auto auto; gap:12px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--panel-line); }
+.crib-fila:last-child{ border-bottom:none; }
+.crib-fila.off{ opacity:.5; }
+.crib-fila b{ color:#fff; }
+.crib-fila small{ color:var(--ink-soft); display:block; }
+.crib-fila .crib-disp{ color:var(--amber); font-family:var(--font-mono); font-size:12.5px; white-space:nowrap; }
+.crib-fila input[type=number]{ width:90px; margin:0; }
+.crib-fila input[type=checkbox]{ width:18px; height:18px; margin:0; }
+.crib-caja-resumen{ margin:10px 0 14px; font-size:13.5px; color:var(--ink); }
+.crib-modal{ position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px; }
+.crib-dialog{ background:var(--panel); border:1.5px solid var(--panel-line); border-radius:14px; max-width:520px; width:100%; padding:22px; color:var(--ink); box-shadow:0 20px 60px rgba(0,0,0,.5); }
+.crib-dialog h3{ margin:0 0 10px; color:#fff; }
+.crib-dialog ul{ margin:8px 0 12px; padding-left:20px; max-height:180px; overflow-y:auto; }
+.crib-dialog .crib-err{ color:#f87171; font-size:13px; min-height:18px; margin:4px 0; }
+.crib-dialog .crib-acc{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:12px; }
+.mov-resultado-grupo{ padding:6px 12px; font-size:11.5px; letter-spacing:.6px; text-transform:uppercase; color:var(--ink-soft); background:var(--panel-2); }
 .mov-origen-box{
   background:var(--bg-app-2);
   border:1.5px dashed var(--line);
@@ -208,19 +227,33 @@ Si dejas vacío el número de caja de destino, conserva el mismo número.
 
 <h2>Material en Tool Crib</h2>
 <p class="section-note">
-Envía material desde cualquier caja hacia el Tool Crib. Decide si te llevas también la
-caja (se libera el espacio en el rack) o si prefieres conservarla. Si la caja tiene otro
-material, no se puede mandar vacía: se te ofrecerá reubicar ese material restante primero.
+Busca una <b>caja</b> (o un material) y envíala al Tool Crib. Al elegir una caja verás todo su
+material: puedes enviar <b>toda la caja</b> o solo una parte del material. Si envías una parte,
+se te pregunta si va con caja o no; si va con caja y queda material, ese material queda sin caja
+y se te pedirá reasignarlo a otra caja.
 </p>
 
-<label>Buscar material o caja de origen</label>
+<label>Buscar caja o material de origen</label>
 <div class="mov-buscar-wrap">
-<input class="buscador" id="cribBuscar" placeholder="Ej. guante nitrilo, PN-1234, A-01-01-02..." autocomplete="off" oninput="buscarMaterialToolCrib()">
+<input class="buscador" id="cribBuscar" placeholder="Ej. caja 06, A-01-01-02, guante nitrilo, PN-1234..." autocomplete="off" oninput="buscarMaterialToolCrib()">
 <div id="cribResultados" class="mov-resultados"></div>
 </div>
 
 <div id="cribOrigenBox" class="mov-origen-box">Ningún material seleccionado todavía.</div>
 
+<div id="cribCajaPanel" style="display:none;">
+<div class="crib-caja-head">
+<span>Material de la caja — elige qué enviar y cuántas piezas</span>
+<span>
+<button type="button" class="btn-outline" onclick="cribMarcarTodo(true)">Seleccionar toda la caja</button>
+<button type="button" class="btn-outline" onclick="cribMarcarTodo(false)">Quitar selección</button>
+</span>
+</div>
+<div id="cribCajaLista" class="crib-caja-lista"></div>
+<div id="cribCajaResumen" class="crib-caja-resumen"></div>
+</div>
+
+<div id="cribMaterialPanel">
 <label>Cantidad a enviar</label>
 <input id="cribCantidad" type="number" min="1" placeholder="Cantidad">
 
@@ -228,6 +261,7 @@ material, no se puede mandar vacía: se te ofrecerá reubicar ese material resta
 <div class="radio-group">
 <label><input type="radio" name="cribCajaModo" value="conservar" checked> Conservar la caja en el rack</label>
 <label><input type="radio" name="cribCajaModo" value="enviar"> Enviar también la caja (liberar el espacio)</label>
+</div>
 </div>
 
 <label>Comentarios</label>
@@ -500,7 +534,11 @@ async function ejecutarMovimientoCaja(){
    PANEL 3 — Tool Crib (enviar)
    ===================== */
 
-let cribSeleccion = null;
+let cribSeleccion = null;   // { tipo:"material", ...ocurrencia } | { tipo:"caja", ubicacion, caja, componentes }
+
+function escHtml(t){
+  return String(t ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
+}
 
 async function buscarMaterialToolCrib(){
   const input = document.getElementById("cribBuscar");
@@ -513,32 +551,66 @@ async function buscarMaterialToolCrib(){
     return;
   }
 
-  const resultados = await window.buscarOcurrenciasMaterial(q);
+  const [cajas, resultados] = await Promise.all([
+    typeof window.buscarCajasToolCrib === "function" ? window.buscarCajasToolCrib(q) : [],
+    window.buscarOcurrenciasMaterial(q)
+  ]);
 
-  if(!resultados.length){
+  if(input.value.trim() !== q) return;   // llegó una búsqueda más nueva
+
+  if(!cajas.length && !resultados.length){
     cont.classList.remove("visible");
     cont.innerHTML = "";
     return;
   }
 
   cont.innerHTML = "";
-  resultados.forEach(r=>{
-    const item = document.createElement("div");
-    item.className = "mov-resultado-item";
-    item.innerHTML = `<span><b>${r.nombre}</b> ${(r.pn && r.pn !== "NO APLICA") ? "· " + r.pn : ""}</span><small>${r.caja} · ${r.cantidad} pcs</small>`;
-    item.onclick = () => seleccionarOcurrenciaToolCrib(r);
-    cont.appendChild(item);
-  });
+
+  if(cajas.length){
+    const h = document.createElement("div");
+    h.className = "mov-resultado-grupo";
+    h.innerText = "Cajas (enviar caja completa o parte de su material)";
+    cont.appendChild(h);
+
+    cajas.forEach(c=>{
+      const item = document.createElement("div");
+      item.className = "mov-resultado-item";
+      item.innerHTML = `<span>📦 <b>Caja ${escHtml(c.caja)}</b> · ${escHtml(c.ubicacion)}${c.pendiente ? " · pendiente de acomodar" : ""}</span><small>${c.materiales} mat. · ${c.piezas} pcs</small>`;
+      item.onclick = () => seleccionarCajaToolCrib(c);
+      cont.appendChild(item);
+    });
+  }
+
+  if(resultados.length){
+    const h = document.createElement("div");
+    h.className = "mov-resultado-grupo";
+    h.innerText = "Material";
+    cont.appendChild(h);
+
+    resultados.forEach(r=>{
+      const item = document.createElement("div");
+      item.className = "mov-resultado-item";
+      item.innerHTML = `<span><b>${escHtml(r.nombre)}</b> ${(r.pn && r.pn !== "NO APLICA") ? "· " + escHtml(r.pn) : ""}</span><small>${escHtml(r.caja)} · ${r.cantidad} pcs</small>`;
+      item.onclick = () => seleccionarOcurrenciaToolCrib(r);
+      cont.appendChild(item);
+    });
+  }
 
   cont.classList.add("visible");
 }
 
+function cribMostrarModo(modo){
+  document.getElementById("cribCajaPanel").style.display = (modo === "caja") ? "block" : "none";
+  document.getElementById("cribMaterialPanel").style.display = (modo === "caja") ? "none" : "block";
+}
+
 function seleccionarOcurrenciaToolCrib(r){
-  cribSeleccion = r;
+  cribSeleccion = { tipo:"material", ...r };
+  cribMostrarModo("material");
 
   const box = document.getElementById("cribOrigenBox");
-  box.innerHTML = `Material: <b>${r.nombre}</b> ${(r.pn && r.pn !== "NO APLICA") ? "(" + r.pn + ")" : ""}<br>
-    Caja de origen: <b>${r.ubicacion}</b> — Disponible: <b>${r.cantidad}</b> pcs`;
+  box.innerHTML = `Material: <b>${escHtml(r.nombre)}</b> ${(r.pn && r.pn !== "NO APLICA") ? "(" + escHtml(r.pn) + ")" : ""}<br>
+    Caja de origen: <b>${escHtml(r.ubicacion)}</b> — Disponible: <b>${r.cantidad}</b> pcs`;
 
   document.getElementById("cribBuscar").value = r.nombre;
   document.getElementById("cribResultados").classList.remove("visible");
@@ -546,21 +618,259 @@ function seleccionarOcurrenciaToolCrib(r){
   document.getElementById("cribCantidad").focus();
 }
 
+/* ---------- caja completa o parte de su material ---------- */
+async function seleccionarCajaToolCrib(c){
+
+  const det = await window.getDetalleCaja(c.ubicacion);
+  if(!det){ alert("Esa caja ya no existe"); return; }
+
+  cribSeleccion = { tipo:"caja", ubicacion:det.ubicacion, caja:det.caja, componentes:det.componentes };
+  cribMostrarModo("caja");
+
+  const totalPzs = det.componentes.reduce((t,x) => t + x.cantidad, 0);
+  document.getElementById("cribOrigenBox").innerHTML =
+    `Caja: <b>${escHtml(det.caja)}</b> · Ubicación: <b>${escHtml(det.ubicacion)}</b>${det.pendiente ? " (pendiente de acomodar)" : ""}<br>
+     Contiene <b>${det.componentes.length}</b> ${det.componentes.length === 1 ? "material" : "materiales"} — <b>${totalPzs}</b> pcs en total`;
+
+  document.getElementById("cribBuscar").value = "Caja " + det.caja;
+  document.getElementById("cribResultados").classList.remove("visible");
+
+  const lista = document.getElementById("cribCajaLista");
+
+  if(!det.componentes.length){
+    lista.innerHTML = `<div class="crib-fila"><span></span><span>Esta caja está vacía: no hay material que enviar.</span></div>`;
+    document.getElementById("cribCajaResumen").innerText = "";
+    return;
+  }
+
+  lista.innerHTML = det.componentes.map((x,i) => `
+    <div class="crib-fila" id="cribFila${i}">
+      <input type="checkbox" id="cribChk${i}" checked onchange="cribActualizar()">
+      <span><b>${escHtml(x.nombre)}</b><small>${(x.pn && x.pn !== "NO APLICA") ? "PN " + escHtml(x.pn) : "Sin PN"}</small></span>
+      <span class="crib-disp">${x.cantidad} pcs</span>
+      <input type="number" id="cribQty${i}" min="1" max="${x.cantidad}" value="${x.cantidad}" oninput="cribActualizar()" title="Piezas a enviar">
+    </div>`).join("");
+
+  cribActualizar();
+}
+
+function cribMarcarTodo(marcar){
+  if(!cribSeleccion || cribSeleccion.tipo !== "caja") return;
+  cribSeleccion.componentes.forEach((x,i)=>{
+    const chk = document.getElementById("cribChk" + i);
+    const qty = document.getElementById("cribQty" + i);
+    if(chk) chk.checked = marcar;
+    if(qty) qty.value = x.cantidad;
+  });
+  cribActualizar();
+}
+
+/* Lee lo marcado: [{nombre, cantidad}] — devuelve null si alguna cantidad es inválida */
+function cribLeerSeleccionCaja(){
+  const sel = [];
+  for(let i = 0; i < cribSeleccion.componentes.length; i++){
+    const x = cribSeleccion.componentes[i];
+    const chk = document.getElementById("cribChk" + i);
+    if(!chk || !chk.checked) continue;
+    const q = parseInt(document.getElementById("cribQty" + i).value);
+    if(isNaN(q) || q <= 0 || q > x.cantidad){
+      alert(`Cantidad inválida para ${x.nombre}. Debe ser entre 1 y ${x.cantidad}.`);
+      return null;
+    }
+    sel.push({ nombre:x.nombre, cantidad:q });
+  }
+  return sel;
+}
+
+function cribEsCajaCompleta(sel){
+  const comps = cribSeleccion.componentes;
+  return sel.length === comps.length &&
+    comps.every(x => { const s = sel.find(y => y.nombre === x.nombre); return s && s.cantidad === x.cantidad; });
+}
+
+function cribActualizar(){
+  if(!cribSeleccion || cribSeleccion.tipo !== "caja") return;
+  const comps = cribSeleccion.componentes;
+  let marcados = 0, pzs = 0, completa = true;
+
+  comps.forEach((x,i)=>{
+    const chk = document.getElementById("cribChk" + i);
+    const qty = document.getElementById("cribQty" + i);
+    const fila = document.getElementById("cribFila" + i);
+    const on = !!(chk && chk.checked);
+    if(fila) fila.classList.toggle("off", !on);
+    if(qty) qty.disabled = !on;
+    if(on){
+      marcados++;
+      const q = Math.min(x.cantidad, Math.max(0, parseInt(qty.value) || 0));
+      pzs += q;
+      if(q !== x.cantidad) completa = false;
+    } else completa = false;
+  });
+
+  const r = document.getElementById("cribCajaResumen");
+  if(marcados === 0) r.innerHTML = "No hay material seleccionado.";
+  else if(completa) r.innerHTML = `Se enviará <b>toda la caja ${escHtml(cribSeleccion.caja)}</b> con todo su material (${pzs} pcs).`;
+  else r.innerHTML = `Se enviará una <b>parte</b> del material: ${marcados} de ${comps.length} materiales · ${pzs} pcs.`;
+}
+
+/* Ventana de decisión. Devuelve { id, valor } o null si se cancela.
+   cfg: { titulo, html, botones:[{id,label,primary}], input:{placeholder, lista:[{value,label}]}, validar(id,valor) → texto de error | null } */
+function cribDialogo(cfg){
+  return new Promise(resolve=>{
+    const m = document.createElement("div");
+    m.className = "crib-modal";
+    m.innerHTML = `
+      <div class="crib-dialog">
+        <h3>${cfg.titulo}</h3>
+        <div>${cfg.html || ""}</div>
+        ${cfg.input ? `<input id="cribDlgInput" list="cribDlgLista" placeholder="${escHtml(cfg.input.placeholder || "")}" autocomplete="off">
+          <datalist id="cribDlgLista">${(cfg.input.lista || []).map(o => `<option value="${escHtml(o.value)}">${escHtml(o.label || "")}</option>`).join("")}</datalist>` : ""}
+        <div class="crib-err" id="cribDlgErr"></div>
+        <div class="crib-acc">
+          <button type="button" class="btn-outline" data-id="">Cancelar</button>
+          ${(cfg.botones || []).map(b => `<button type="button" ${b.primary ? "" : 'class="btn-outline"'} data-id="${b.id}">${escHtml(b.label)}</button>`).join("")}
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+
+    const input = m.querySelector("#cribDlgInput");
+    if(input) input.focus();
+
+    const cerrar = (res) => { m.remove(); resolve(res); };
+
+    m.querySelectorAll("button[data-id]").forEach(btn=>{
+      btn.onclick = () => {
+        const id = btn.dataset.id;
+        if(!id){ cerrar(null); return; }
+        const valor = input ? input.value.trim() : "";
+        const err = cfg.validar ? cfg.validar(id, valor) : null;
+        if(err){ m.querySelector("#cribDlgErr").innerText = err; return; }
+        cerrar({ id, valor });
+      };
+    });
+  });
+}
+
+function cribListaMaterial(items){
+  return "<ul>" + items.map(x => `<li><b>${escHtml(x.nombre)}</b> — ${x.cantidad} pcs</li>`).join("") + "</ul>";
+}
+
+/* material que NO se envía (queda en la caja) */
+function cribRestantes(sel){
+  const res = [];
+  cribSeleccion.componentes.forEach(x=>{
+    const s = sel.find(y => y.nombre === x.nombre);
+    const q = s ? s.cantidad : 0;
+    if(x.cantidad - q > 0) res.push({ nombre:x.nombre, cantidad:x.cantidad - q });
+  });
+  return res;
+}
+
+async function ejecutarEnvioCajaToolCrib(){
+
+  const sel = cribLeerSeleccionCaja();
+  if(sel === null) return;
+  if(!sel.length){ alert("Selecciona al menos un material de la caja"); return; }
+
+  const comentarios = document.getElementById("cribComentarios").value;
+  const caja = escHtml(cribSeleccion.caja);
+  const ub = cribSeleccion.ubicacion;
+
+  let conCaja = false, destino = null;
+
+  if(cribEsCajaCompleta(sel)){
+
+    /* ---- caja completa: por default se envía con todo y caja ---- */
+    const r = await cribDialogo({
+      titulo: "Enviar caja completa al Tool Crib",
+      html: `<p>Se va a enviar la <b>caja ${caja}</b> <b>con todo y caja</b> al Tool Crib, con todo este material:</p>${cribListaMaterial(sel)}`,
+      botones: [
+        { id:"caja", label:"Confirmar: enviar con todo y caja", primary:true },
+        { id:"material", label:"Solo el material (conservar la caja vacía)" }
+      ]
+    });
+    if(!r) return;
+    conCaja = (r.id === "caja");
+
+  } else {
+
+    /* ---- envío parcial: se pregunta si va con caja o no ---- */
+    const r = await cribDialogo({
+      titulo: "Enviar parte del material",
+      html: `<p>Vas a enviar una parte del material de la <b>caja ${caja}</b>:</p>${cribListaMaterial(sel)}<p>¿Se manda <b>con caja</b> o no?</p>`,
+      botones: [
+        { id:"con", label:"Con caja", primary:true },
+        { id:"sin", label:"Sin caja (la caja se queda en su lugar)" }
+      ]
+    });
+    if(!r) return;
+    conCaja = (r.id === "con");
+
+    if(conCaja){
+      /* material que no se envía: queda sin caja → hay que reasignarlo ya */
+      const restantes = cribRestantes(sel);
+      const cajas = await window.getCajasParaReasignar(ub);
+
+      const resolver = (valor) => {
+        const v = String(valor || "").trim().toUpperCase();
+        if(!v) return null;
+        const num = /^\d+$/.test(v) ? v.padStart(2,"0") : v;
+        return cajas.find(c => c.ubicacion.toUpperCase() === v) ||
+               cajas.find(c => String(c.caja).toUpperCase() === num) || null;
+      };
+
+      const r2 = await cribDialogo({
+        titulo: "Material que queda sin caja",
+        html: `<p>Al enviar la caja <b>${caja}</b> con el Tool Crib, estos materiales <b>quedan sin caja</b>:</p>${cribListaMaterial(restantes)}<p>Reasígnalos ahora a otra caja (escribe su número o ubicación):</p>`,
+        input: {
+          placeholder: "Ej. 07 o A-01-02-07",
+          lista: cajas.map(c => ({ value:c.ubicacion, label:"Caja " + c.caja }))
+        },
+        botones: [{ id:"ok", label:"Reasignar y enviar", primary:true }],
+        validar: (id, valor) => {
+          if(!valor) return "Indica la caja donde quedará el material restante.";
+          const d = resolver(valor);
+          if(!d) return "No encontré esa caja (debe existir y estar acomodada).";
+          return null;
+        }
+      });
+      if(!r2) return;   // se canceló: no se cambia nada
+      destino = resolver(r2.valor).ubicacion;
+    }
+  }
+
+  const ok = await window.enviarCajaToolCrib(ub, sel, conCaja, destino, comentarios);
+
+  if(ok){
+    limpiarEnvioToolCrib();
+    await cargarSelectRegreso();
+  }
+}
+
 function limpiarEnvioToolCrib(){
   cribSeleccion = null;
+  cribMostrarModo("material");
   document.getElementById("cribBuscar").value = "";
   document.getElementById("cribResultados").innerHTML = "";
   document.getElementById("cribResultados").classList.remove("visible");
   document.getElementById("cribOrigenBox").innerText = "Ningún material seleccionado todavía.";
   document.getElementById("cribCantidad").value = "";
   document.getElementById("cribComentarios").value = "";
+  document.getElementById("cribCajaLista").innerHTML = "";
+  document.getElementById("cribCajaResumen").innerText = "";
   document.querySelector('input[name="cribCajaModo"][value="conservar"]').checked = true;
 }
 
 async function ejecutarEnvioToolCrib(){
 
   if(!cribSeleccion){
-    alert("Primero busca y selecciona el material a enviar");
+    alert("Primero busca y selecciona la caja o el material a enviar");
+    return;
+  }
+
+  if(cribSeleccion.tipo === "caja"){
+    await ejecutarEnvioCajaToolCrib();
     return;
   }
 
