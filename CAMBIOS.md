@@ -538,3 +538,5 @@ En **Movimientos → Material a Tool Crib**:
 - **Revertir nombres:** cada loopback trae por defecto su nombre anterior (registro guardado → Historial → etiqueta de la caja), marcado y editable.
 
 - **Botón "Regresar loopbacks al nombre anterior":** busca el nombre que tenía cada loopback antes de la actualización (registro guardado → ediciones del Historial → movimientos anteriores de esa caja en el Historial → etiqueta de la caja → nombre anterior más usado en el Historial para esa medida) y lo propone ya marcado; se puede editar y confirmar.
+
+- **Acomodo masivo (solo admin, panel de la Lista de cajas):** se pegan listas de cajas por rack/nivel/slot, se previsualiza qué pasaría con cada una (acomodar, mover, crear desde el Excel, omitir inexistentes), se detectan errores (caja en dos grupos, posición inexistente) y se acomoda todo en una sola operación.

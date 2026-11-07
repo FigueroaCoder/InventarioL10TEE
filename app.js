@@ -2644,6 +2644,182 @@ window.revertirNombresLoopbacks = async function(){   // botón: "Regresar loopb
 };
 
 /* =====================================================
+   ACOMODO MASIVO (solo administrador)
+   Pega listas de cajas por rack / nivel / slot, revisa la previsualización y acomoda todo junto.
+   - Cajas pendientes → se acomodan; cajas ya acomodadas → se mueven.
+   - Cajas que aún no existen pero están en el Excel → se crean ya acomodadas.
+   ===================================================== */
+
+const AM_LISTAS_INICIALES = [
+  { nivel: 2, slot: 3, texto: "143 145 149 147 148 162 136 153 137 138 139 141 142 150 155 132 152 154" },
+  { nivel: 2, slot: 2, texto: "156 133 159 126 157 135 160 151 158 64 63 61 36 129 36 77 125 127 163 21" },
+  { nivel: 2, slot: 1, texto: "74 127 70 161 176 67 28 110 79 27 2 72 71 62 16 17 20 30 78 60 32 31 24" }
+];
+
+window.abrirAcomodoMasivo = async function(){
+
+  if(bloquearSiNoAdmin("Solo el administrador puede hacer el acomodo masivo.")) return false;
+  await loadCajas(true);
+  await loadRacks(true);
+
+  const racks = cacheRacks.filter(r => r.status === "active");
+  if(!racks.length){ alert("No hay racks activos."); return false; }
+  const rackDef = racks.find(r => r.nombre === "A") ? "A" : racks[0].nombre;
+
+  const grupos = AM_LISTAS_INICIALES.map(g => ({ rack: rackDef, nivel: g.nivel, slot: g.slot, texto: g.texto }));
+  const excelPorNumero = new Map(CAJAS_EXCEL.map(x => [normCaja(x.caja), x]));
+
+  const parsear = t => {
+    const vistos = new Set(), lista = [];
+    String(t || "").split(/[\s,;]+/).forEach(x => { const n = normCaja(x); if(n && !vistos.has(n)){ vistos.add(n); lista.push(n); } });
+    return lista;
+  };
+
+  const evaluar = () => {
+    const porNumero = lcCajasPorNumero();
+    const aparece = new Map();
+    const filas = [];
+    grupos.forEach((g,gi) => {
+      const r = racks.find(x => x.nombre === g.rack);
+      const posOk = !!r && g.nivel >= 1 && g.nivel <= Number(r.niveles) && g.slot >= 1 && g.slot <= Number(r.slots);
+      parsear(g.texto).forEach(n => {
+        if(!aparece.has(n)) aparece.set(n, []);
+        aparece.get(n).push(gi);
+        const c = porNumero.get(n);
+        const destino = buildUbicacion(g.rack, g.nivel, g.slot, n);
+        const f = { gi, n, c, destino, posOk, accion: "", error: "" };
+        if(!posOk) f.error = "La posición no existe en ese rack";
+        else if(c){
+          if(c.ubicacion === destino) f.accion = "ya";
+          else {
+            f.accion = esCajaPendiente(c) ? "acomodar" : "mover";
+            if(cacheCajas.some(x => x.ubicacion === destino)) f.error = "Ya existe un registro en el destino";
+          }
+        } else if(excelPorNumero.has(n)){
+          f.accion = "excel";
+          if(cacheCajas.some(x => x.ubicacion === destino)) f.error = "Ya existe un registro en el destino";
+        } else f.accion = "noexiste";
+        filas.push(f);
+      });
+    });
+    filas.forEach(f => { if(aparece.get(f.n).length > 1) f.error = f.error || `Está en ${aparece.get(f.n).length} grupos a la vez: déjala solo en uno`; });
+    return filas;
+  };
+
+  const ETQ = { acomodar:"Pendiente → se acomoda", mover:"Ya acomodada → se mueve", excel:"No existe: se crea desde el Excel", ya:"Ya está en esa posición", noexiste:"No existe (se omite)" };
+
+  const pintarPrev = () => {
+    const filas = evaluar();
+    const cuenta = k => filas.filter(f => f.accion === k && !f.error).length;
+    const errores = filas.filter(f => f.error).length;
+    document.getElementById("amPrev").innerHTML =
+      `<div class="lc-chips"><span class="lc-chip"><b>${cuenta("acomodar")}</b> a acomodar</span><span class="lc-chip"><b>${cuenta("mover")}</b> a mover</span>` +
+      `<span class="lc-chip"><b>${cuenta("excel")}</b> a crear desde el Excel</span><span class="lc-chip"><b>${cuenta("ya")}</b> ya en su lugar</span>` +
+      `<span class="lc-chip"><b>${filas.filter(f => f.accion === "noexiste").length}</b> inexistentes (se omiten)</span>` +
+      (errores ? `<span class="lc-chip" style="background:#fde8e8;color:#b42318"><b>${errores}</b> con error</span>` : "") + `</div>` +
+      `<table class="pl-tabla"><thead><tr><th>Caja</th><th>Situación</th><th>Destino</th><th>Revisión</th></tr></thead><tbody>` +
+      filas.map(f => `<tr><td><b>${trEscape(f.n)}</b></td>
+        <td>${f.c ? (esCajaPendiente(f.c) ? "Pendiente" : "Acomodada en " + trEscape(f.c.ubicacion)) : "—"}</td>
+        <td>${trEscape(nombreRack(grupos[f.gi].rack))} · N${pad2(grupos[f.gi].nivel)} · S${pad2(grupos[f.gi].slot)}</td>
+        <td>${f.error ? `<span class="pl-aviso">${trEscape(f.error)}</span>` : `<span class="${f.accion === "noexiste" ? "pl-aviso" : "pl-ok"}">${ETQ[f.accion]}</span>`}</td></tr>`).join("") + `</tbody></table>`;
+  };
+
+  const opcionesNum = n => Array.from({length:n}, (_,i) => `<option value="${i+1}">${pad2(i+1)}</option>`).join("");
+
+  const pintarGrupos = () => {
+    document.getElementById("amGrupos").innerHTML = grupos.map((g,i) => {
+      const r = racks.find(x => x.nombre === g.rack);
+      return `<div class="pl-caja"><div class="pl-head">
+        <b>Grupo ${i+1}</b>
+        <select data-am="rack" data-g="${i}">${racks.map(x => `<option value="${trEscape(x.nombre)}" ${x.nombre === g.rack ? "selected" : ""}>${trEscape(nombreRack(x.nombre))}</option>`).join("")}</select>
+        <label style="margin:0">Nivel</label><select data-am="nivel" data-g="${i}">${opcionesNum(r ? Number(r.niveles) : 1)}</select>
+        <label style="margin:0">Slot</label><select data-am="slot" data-g="${i}">${opcionesNum(r ? Number(r.slots) : 1)}</select>
+        <button type="button" class="btn-danger lc-btn" data-am="quitar" data-g="${i}" title="Quitar grupo">✕</button></div>
+        <textarea data-am="texto" data-g="${i}" rows="3" style="width:100%;margin-top:6px;" placeholder="Números de caja separados por espacio, coma o renglón">${trEscape(g.texto)}</textarea></div>`;
+    }).join("") +
+    `<div style="margin-top:8px;"><button type="button" class="lc-btn" id="amMas">+ Agregar grupo</button></div>`;
+    grupos.forEach((g,i) => {
+      const n = document.querySelector(`select[data-am="nivel"][data-g="${i}"]`), s2 = document.querySelector(`select[data-am="slot"][data-g="${i}"]`);
+      if(n) n.value = String(g.nivel); if(s2) s2.value = String(g.slot);
+    });
+    document.getElementById("amMas").onclick = () => { grupos.push({ rack: rackDef, nivel: 1, slot: 1, texto: "" }); pintarGrupos(); pintarPrev(); };
+  };
+
+  plAbrirModal("Acomodo masivo de cajas",
+    "Pega o edita las listas de cajas de cada rack / nivel / slot. Abajo ves qué pasaría con cada caja. No se guarda nada hasta pulsar “Acomodar todo”.",
+    `<div id="amGrupos"></div><h4 class="pl-h5">Previsualización</h4><div id="amPrev"></div>`, "Acomodar todo", async () => {
+
+      const filas = evaluar();
+      if(filas.some(f => f.error)){ alert("Hay cajas con error. Corrige los grupos (revisa la columna Revisión) antes de acomodar."); return; }
+      const hacer = filas.filter(f => ["acomodar","mover","excel"].includes(f.accion));
+      if(!hacer.length){ alert("No hay cajas por acomodar."); return; }
+      if(!confirm(`Se acomodarán ${hacer.length} cajas (${filas.filter(f => f.accion === "noexiste").length} inexistentes se omiten). ¿Continuar?`)) return;
+
+      const btn = document.getElementById("plAplicar"); btn.disabled = true;
+      try{
+        let piezas = 0, lote = writeBatch(db), ops = 0;
+        for(const f of hacer){
+          const g = grupos[f.gi];
+          const base = { rack: g.rack, nivel: Number(g.nivel), slot: Number(g.slot), caja: f.n, ubicacion: f.destino,
+                         acomodo2: true, acomodada: true, acomodadaPor: getUser(), acomodadaEn: Date.now() };
+          let datos;
+          if(f.accion === "excel"){
+            const x = excelPorNumero.get(f.n);
+            datos = { ...base, migracion: true, importadaExcel: true,
+              componentes: x.componentes.map(k => ({
+                nombre: nombreCanonLoopback(k.nombre, k.pn) || k.nombre, pn: k.pn || "NO APLICA", cantidad: k.cantidad,
+                comentarios: [k.proveedor ? String(k.proveedor).toUpperCase() : "", x.nota ? String(x.nota).toUpperCase() : ""].filter(Boolean).join(" · ") || "NO APLICA",
+                responsable: getUser(), categoria: "", medida: "" })) };
+          } else {
+            const { idDoc, ...resto } = f.c;
+            datos = { ...resto, ...base, migracion: resto.migracion === undefined ? true : resto.migracion };
+            lote.delete(doc(db,"cajas", f.c.ubicacion)); ops++;
+          }
+          piezas += (datos.componentes || []).reduce((t,x) => t + (Number(x.cantidad)||0), 0);
+          lote.set(doc(db,"cajas", f.destino), datos); ops++;
+          if(ops >= 380){ await lote.commit(); lote = writeBatch(db); ops = 0; }
+        }
+        await lote.commit();
+
+        await addHist({ ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(), accion: "ACOMODO CAJA",
+          ubicacion: `ACOMODO MASIVO · ${hacer.length} CAJAS`, nombre: "Acomodo masivo", cantidad: piezas,
+          responsable: getUser(), comentarios: "ACOMODO MASIVO DE CAJAS", sinFila: true });
+
+        plCerrar();
+        await loadCajas(true);
+        if(typeof window.showStock === "function") await window.showStock(true);
+        if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+        alert(`Listo: ${hacer.length} cajas acomodadas.`);
+      }catch(e){
+        console.error(e);
+        alert("Error en el acomodo masivo: " + (e && e.message ? e.message : e));
+        btn.disabled = false;
+      }
+    });
+
+  pintarGrupos();
+  pintarPrev();
+
+  const cuerpo = document.getElementById("plCuerpo");
+  cuerpo.addEventListener("input", e => {
+    const t = e.target;
+    if(t.dataset.am === "texto"){ grupos[Number(t.dataset.g)].texto = t.value; pintarPrev(); }
+  });
+  cuerpo.addEventListener("change", e => {
+    const t = e.target, i = Number(t.dataset.g);
+    if(t.dataset.am === "rack"){ grupos[i].rack = t.value; const r = racks.find(x => x.nombre === t.value);
+      grupos[i].nivel = Math.min(grupos[i].nivel, Number(r.niveles)); grupos[i].slot = Math.min(grupos[i].slot, Number(r.slots)); pintarGrupos(); pintarPrev(); }
+    if(t.dataset.am === "nivel"){ grupos[i].nivel = Number(t.value); pintarPrev(); }
+    if(t.dataset.am === "slot"){ grupos[i].slot = Number(t.value); pintarPrev(); }
+  });
+  cuerpo.addEventListener("click", e => {
+    const t = e.target.closest("button[data-am=quitar]");
+    if(t){ grupos.splice(Number(t.dataset.g), 1); pintarGrupos(); pintarPrev(); }
+  });
+  return true;
+};
+
+/* =====================================================
    LISTA DE CAJAS (1 → última) — existentes e inexistentes
    Clic en una caja: ver contenido, quitar material y acomodarla/moverla.
    ===================================================== */
@@ -2767,7 +2943,7 @@ window.renderListaCajas = function(){
       adm.innerHTML = `<div class="lc-admin"><div><b>Actualización de migración</b> (solo administrador)<br>` +
         `${r.cajasPorImportar} cajas del Excel por importar · ${r.cajasConLoopbackPorRenombrar} cajas con loopbacks por renombrar · ` +
         `${r.importadas} cajas importadas · ${r.loopbacksEnCajas} loopbacks con nombre NVIDIA en cajas.</div>` +
-        `<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" onclick="aplicarActualizacionMigracion()">Previsualizar y actualizar</button>` +
+        `<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" onclick="aplicarActualizacionMigracion()">Previsualizar y actualizar</button><button type="button" onclick="abrirAcomodoMasivo()">Acomodo masivo</button>` +
         `<button type="button" class="btn-danger" onclick="revertirNombresLoopbacks()">Regresar loopbacks al nombre anterior</button><button type="button" class="btn-danger" onclick="revertirActualizacionMigracion()">Revertir importación Excel</button></div></div>`;
     } else adm.innerHTML = "";
   }
