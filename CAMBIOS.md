@@ -502,3 +502,17 @@ En **Movimientos → Material a Tool Crib**:
 ### Pendientes de acomodar: siempre visibles en el 3D
 - El área de **Pendientes de acomodar** (tarima con letrero, a la derecha de las tarimas) vuelve a mostrarse con todas las cajas que tenga, y **aparece aunque tenga 0 cajas** (tarima vacía con el letrero "0 CAJAS").
 - Archivos: `rack3d.js`, `app.js`.
+
+---
+
+## Update: Reinicio de pendientes, loopbacks, importación del Excel y Lista de cajas
+
+**Archivos modificados:** `app.js`, `racks.html`, `CAMBIOS.md` (sin reglas nuevas en Firestore).
+
+- **Todas las cajas vuelven a Pendientes de acomodar.** Una caja solo está acomodada si tiene la marca `acomodo2:true`
+  (se pone al acomodarla, crearla o moverla). Las cajas existentes no tienen la marca, así que vuelven a pendientes sin borrar nada.
+- **Loopbacks:** 0.5 m → `NVIDIA 1600 Gbps 0.5 m`, 1.1 m → `NVIDIA 1600 Gbps 1.1 m` (por PN o por nombre). Se ve así en todo el sistema.
+- **Botón "Aplicar actualización" (solo admin, en Racks y Cajas → Lista de cajas):** guarda el nombre de loopbacks en la base
+  e importa como pendientes las 43 cajas del Excel (132–174; la 173 trae 2 cables distintos). Si una caja ya existe, no se duplica.
+- **Lista de cajas:** de la 1 a la última; las que no existen dicen INEXISTENTE. Clic en una caja: ver contenido, quitar material
+  y acomodarla (si es pendiente) o moverla (si ya está acomodada).

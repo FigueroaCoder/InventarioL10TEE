@@ -190,14 +190,11 @@ se muestran aparte (a un lado de los racks) como "pendientes de acomodar".
 ===================== */
 function esCajaPendiente(c){
   if(!c) return false;
-  const r = String(c.rack ?? "").toUpperCase();
-  /* rack A y tarimas: todo lo registrado ahí está ya acomodado */
-  if(RACKS_TODO_REGISTRADO.includes(r) || TARIMAS_ALMACEN.includes(r)) return false;
-  /* rack B: solo es pendiente el material viejo de migración sin acomodar;
-     las cajas nuevas (migracion:false) o ya acomodadas se ven en el rack */
-  if(RACKS_ACTIVOS_FIJOS.includes(r)) return c.migracion !== false && c.acomodada !== true;
-  /* racks inactivos: su material queda como pendiente de registro */
-  return true;
+  /* REINICIO DE ACOMODO: todas las cajas son pendientes hasta que se acomodan
+     (o se crean) con la marca acomodo2:true. Las cajas que ya existían antes de
+     este reinicio no tienen la marca, por eso vuelven a pendientes sin tocar
+     ningún dato guardado. */
+  return c.acomodo2 !== true;
 }
 window.esCajaPendiente = esCajaPendiente;
 
@@ -211,6 +208,71 @@ function cajasDeSlot(rack, nivel, slot){
     Number(c.slot) === Number(slot)
   );
 }
+
+/* =====================
+LOOPBACKS — nombre único
+-------------------------------------------------------
+Todos los loopbacks se llaman igual, sin importar cómo se capturaron antes:
+   0.5 m  →  NVIDIA 1600 Gbps 0.5 m
+   1.1 m  →  NVIDIA 1600 Gbps 1.1 m
+Se reconocen por su número de parte (980-9IAL2-00X00A = 0.5 m,
+980-9IAL2-00X01B y TEMP-S000239598 = 1.1 m) o por su nombre (LOOPBACK ... 1.1 M).
+El cambio se ve en todo el sistema al instante; el administrador lo guarda
+en la base con el botón "Aplicar actualización" de Racks y Cajas → Lista de cajas.
+===================== */
+
+const LB_NOMBRE_05 = "NVIDIA 1600 Gbps 0.5 m";
+const LB_NOMBRE_11 = "NVIDIA 1600 Gbps 1.1 m";
+const LB_PN_05 = ["980-9IAL2-00X00A"];
+const LB_PN_11 = ["980-9IAL2-00X01B", "TEMP-S000239598"];
+
+function lbTxt(t){ return String(t ?? "").trim().replace(/\s+/g," ").toLowerCase(); }
+
+/* devuelve el nombre oficial del loopback, o null si el material no es un loopback */
+function nombreCanonLoopback(nombre, pn){
+  const n = String(nombre ?? "").toUpperCase().replace(/\s+/g," ").trim();
+  const p = String(pn ?? "").toUpperCase().trim();
+  if(LB_PN_11.includes(p)) return LB_NOMBRE_11;
+  if(LB_PN_05.includes(p)) return LB_NOMBRE_05;
+  if(/LOOP\s*-?\s*BACK|NVIDIA\s+1600\s*GBPS/.test(n)){
+    if(/(^|[^\d.,])1[.,]1\s*(M|MT|MTS|METROS?)?\b/.test(n)) return LB_NOMBRE_11;
+    if(/(^|[^\d.,])0?[.,]5\s*(M|MT|MTS|METROS?)?\b/.test(n)) return LB_NOMBRE_05;
+  }
+  return null;
+}
+window.nombreCanonLoopback = nombreCanonLoopback;
+
+/* arma el objeto de caja para el caché; si algún loopback tenía otro nombre lo
+   muestra con el oficial y marca la caja (_lbCambio) para poder guardarlo en la base */
+function prepararCaja(id, data){
+  const caja = { idDoc: id, ...data };
+  if(Array.isArray(caja.componentes)){
+    let cambio = false;
+    caja.componentes = caja.componentes.map(comp => {
+      if(!comp) return comp;
+      const canon = nombreCanonLoopback(comp.nombre, comp.pn);
+      if(!canon) return comp;
+      if(lbTxt(comp.nombre) !== lbTxt(canon)) cambio = true;
+      return { ...comp, nombre: canon };
+    });
+    if(cambio) caja._lbCambio = true;
+  }
+  return caja;
+}
+
+/* une componentes repetidos (mismo nombre) sumando su cantidad */
+function fusionarComponentes(comps){
+  const salida = [];
+  (comps || []).forEach(comp => {
+    const k = lbTxt(comp && comp.nombre);
+    const ya = k ? salida.find(x => lbTxt(x.nombre) === k) : null;
+    if(!ya){ salida.push({ ...comp }); return; }
+    ya.cantidad = (Number(ya.cantidad) || 0) + (Number(comp.cantidad) || 0);
+    if((!ya.pn || ya.pn === "NO APLICA") && comp.pn) ya.pn = comp.pn;
+  });
+  return salida;
+}
+
 
 /* =====================
 CACHE
@@ -228,10 +290,7 @@ async function loadCajas(force){
   if(!force && cacheCajas.length > 0) return cacheCajas;
 
   const snapshot = await getDocs(collection(db,"cajas"));
-  cacheCajas = snapshot.docs.map(d => ({
-    idDoc: d.id,
-    ...d.data()
-  }));
+  cacheCajas = snapshot.docs.map(d => prepararCaja(d.id, d.data()));
   if(typeof recomponerToolCrib === "function") recomponerToolCrib();
 
   return cacheCajas;
@@ -1026,7 +1085,8 @@ window.crearCajaEnSlot = async function(rack, nivel, slot, opts){
     await setDoc(cajaRef, {
       rack, nivel: parseInt(nivel), slot: parseInt(slot), caja: cajaId, ubicacion,
       componentes: [],
-      migracion: false      // caja nueva: no es material de migración
+      migracion: false,     // caja nueva: no es material de migración
+      acomodo2: true        // ya está en su posición real (no es pendiente)
     });
     // tamaño físico y estado (llena / poco contenido...) elegidos al crearla
     const extra = {};
@@ -1877,8 +1937,8 @@ window.consultarCajaMigracion = function(numero){
   }
 
   const c = coincidencias[0];
-  if(c.acomodada === true) return { estado:"acomodada", numero:n, ubicacion:c.ubicacion };
-  return { estado:"nueva", numero:n, ubicacion:c.ubicacion };
+  /* si no es pendiente, ya está en su posición real */
+  return { estado:"acomodada", numero:n, ubicacion:c.ubicacion };
 };
 
 /* Asigna una caja de migración a su posición real (rack / nivel / slot).
@@ -1938,6 +1998,7 @@ window.acomodarCajaMigrada = async function(ubicacionActual, rack, nivel, slot){
       componentes: datos.componentes || [],
       migracion: true,
       acomodada: true,
+      acomodo2: true,
       acomodadaPor: getUser(),
       acomodadaEn: Date.now()
     };
@@ -1975,6 +2036,412 @@ window.acomodarCajaMigrada = async function(ubicacionActual, rack, nivel, slot){
   }
 
 };
+
+/* =====================================================
+   ACTUALIZACIÓN DE MIGRACIÓN (solo administrador)
+   - Importa las cajas del Excel como PENDIENTES de acomodar
+   - Guarda en la base el nombre oficial de los loopbacks
+   ===================================================== */
+
+const CAJAS_EXCEL = [{"caja":"132","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"133","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"134","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"135","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"136","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"137","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"138","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"139","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"140","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"141","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"142","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"143","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"144","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"145","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"146","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"147","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"148","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"149","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"150","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":48,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"151","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"152","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"153","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"154","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"155","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"156","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"157","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"158","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":28,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"159","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":29,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"160","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"161","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"162","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":30,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"163","componentes":[{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":50,"proveedor":"Amphenol (Xiamen) High Speed Cable"}],"nota":""},{"caja":"164","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"TEMP-S000239598","cantidad":24,"proveedor":""}],"nota":""},{"caja":"165","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"TEMP-S000239598","cantidad":15,"proveedor":""}],"nota":""},{"caja":"166","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":23,"proveedor":""}],"nota":""},{"caja":"167","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":24,"proveedor":""}],"nota":""},{"caja":"168","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":24,"proveedor":""}],"nota":""},{"caja":"169","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":24,"proveedor":""}],"nota":""},{"caja":"170","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":30,"proveedor":""}],"nota":""},{"caja":"171","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":30,"proveedor":""}],"nota":""},{"caja":"172","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":29,"proveedor":""}],"nota":""},{"caja":"173","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":11,"proveedor":""},{"nombre":"NVIDIA 1600 Gbps 0.5 m","pn":"980-9IAL2-00X00A","cantidad":12,"proveedor":""}],"nota":"VIENEN 2 CABLES DIFERENTES EN LA MISMA CAJA"},{"caja":"174","componentes":[{"nombre":"NVIDIA 1600 Gbps 1.1 m","pn":"980-9IAL2-00X01B","cantidad":30,"proveedor":""}],"nota":""}];
+
+/* cajas del Excel que todavía no existen en el sistema */
+function excelFaltantes(){
+  const existentes = new Set(cacheCajas.map(c => normCaja(c.caja || "")));
+  return CAJAS_EXCEL.filter(x => !existentes.has(normCaja(x.caja)));
+}
+
+window.getResumenMigracion = function(){
+  return {
+    cajasPorImportar: excelFaltantes().length,
+    cajasExcelYaExisten: CAJAS_EXCEL.length - excelFaltantes().length,
+    cajasConLoopbackPorRenombrar: cacheCajas.filter(c => c._lbCambio).length
+  };
+};
+
+window.aplicarActualizacionMigracion = async function(){
+
+  if(bloquearSiNoAdmin("Solo el administrador puede aplicar esta actualización.")) return false;
+
+  await loadCajas(true);
+  const faltantes = excelFaltantes();
+  const renombrar = cacheCajas.filter(c => c._lbCambio);
+
+  if(!faltantes.length && !renombrar.length){
+    alert("No hay nada pendiente por aplicar.");
+    return true;
+  }
+
+  const piezas = faltantes.reduce((t,x) => t + x.componentes.reduce((a,b) => a + b.cantidad, 0), 0);
+  if(!confirm(
+    `Se va a aplicar:\n\n` +
+    `• Importar ${faltantes.length} cajas del Excel como PENDIENTES DE ACOMODAR (${piezas} piezas).\n` +
+    `• Guardar el nombre oficial de loopbacks en ${renombrar.length} cajas ya existentes.\n\n` +
+    `¿Continuar?`)) return false;
+
+  try{
+
+    /* 1) renombrar loopbacks ya registrados (y unir los que queden duplicados en una caja) */
+    for(let i = 0; i < renombrar.length; i += 400){
+      const lote = writeBatch(db);
+      renombrar.slice(i, i + 400).forEach(c => {
+        lote.update(doc(db,"cajas", c.idDoc || c.ubicacion), { componentes: fusionarComponentes(c.componentes) });
+      });
+      await lote.commit();
+    }
+
+    /* 2) importar cajas del Excel como pendientes (rack "PEND": no es ningún rack real) */
+    for(let i = 0; i < faltantes.length; i += 400){
+      const lote = writeBatch(db);
+      faltantes.slice(i, i + 400).forEach(x => {
+        const caja = normCaja(x.caja);
+        const ubicacion = buildUbicacion("PEND", 1, 1, caja);
+        const nota = x.nota ? String(x.nota).toUpperCase() : "";
+        lote.set(doc(db,"cajas", ubicacion), {
+          rack: "PEND", nivel: 1, slot: 1, caja, ubicacion,
+          componentes: x.componentes.map(k => {
+            const canon = nombreCanonLoopback(k.nombre, k.pn);
+            const coms = [k.proveedor ? String(k.proveedor).toUpperCase() : "", nota].filter(Boolean).join(" · ");
+            return {
+              nombre: canon || k.nombre, pn: k.pn || "NO APLICA", cantidad: k.cantidad,
+              comentarios: coms || "NO APLICA", responsable: getUser(), categoria: "", medida: ""
+            };
+          }),
+          migracion: true,
+          importadaExcel: true,
+          ...(nota ? { nota } : {})
+        });
+      });
+      await lote.commit();
+    }
+
+    if(faltantes.length){
+      await addHist({
+        ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(),
+        accion: "ENTRADA",
+        ubicacion: `IMPORTACION EXCEL · ${faltantes.length} CAJAS PENDIENTES DE ACOMODAR`,
+        nombre: "CAJAS DEL EXCEL (LOOPBACKS)",
+        cantidad: piezas,
+        responsable: getUser(),
+        comentarios: "IMPORTACION DE CAJAS DESDE EXCEL",
+        sinFila: true
+      });
+    }
+    if(renombrar.length){
+      await addHist({
+        ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(),
+        accion: "ACTUALIZACION",
+        ubicacion: `${renombrar.length} CAJAS`,
+        nombre: "LOOPBACKS → NVIDIA 1600 Gbps",
+        cantidad: 0,
+        responsable: getUser(),
+        comentarios: "NOMBRE OFICIAL DE LOOPBACKS",
+        sinFila: true
+      });
+    }
+
+    await loadCajas(true);
+    if(typeof window.showStock === "function") await window.showStock(true);
+    if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+    alert("Actualización aplicada.");
+    return true;
+
+  }catch(e){
+    console.error(e);
+    alert("Error aplicando la actualización: " + (e && e.message ? e.message : e));
+    return false;
+  }
+};
+
+/* =====================================================
+   LISTA DE CAJAS (1 → última) — existentes e inexistentes
+   Clic en una caja: ver contenido, quitar material y acomodarla/moverla.
+   ===================================================== */
+
+let lcAbierta = null;     // ubicación de la caja abierta en la ventana
+
+function lcEstilos(){
+  if(document.getElementById("lcEstilos")) return;
+  emEstilos();
+  const st = document.createElement("style");
+  st.id = "lcEstilos";
+  st.textContent = `
+.lc-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; margin-top:12px; }
+.lc-tile{ border:1px solid var(--line,#e1e5ea); border-left:4px solid #1f9d55; border-radius:8px; background:#fff; padding:9px 10px; cursor:pointer; text-align:left; font:inherit; color:inherit; min-height:74px; display:block; width:100%; }
+.lc-tile:hover{ box-shadow:0 8px 18px -10px rgba(15,20,30,.4); transform:translateY(-1px); }
+.lc-tile b{ font-family:var(--font-mono,monospace); font-size:15px; display:block; }
+.lc-tile small{ display:block; color:var(--ink-muted,#6b7280); font-size:11.5px; line-height:1.35; margin-top:2px; }
+.lc-tile.pend{ border-left-color:#facc15; }
+.lc-tile.vacia{ border-left-color:#f87171; }
+.lc-tile.no{ border-style:dashed; border-left:4px dashed #c4c9d4; background:#f4f5f7; cursor:default; color:#9aa1ad; }
+.lc-tile.no:hover{ box-shadow:none; transform:none; }
+.lc-tile.no small{ color:#9aa1ad; font-weight:700; letter-spacing:.6px; }
+.lc-chips{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
+.lc-chip{ border-radius:99px; padding:5px 12px; font-size:12.5px; background:#eef1f4; color:#374151; }
+.lc-chip b{ font-family:var(--font-mono,monospace); }
+.lc-tools{ display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+.lc-tools input{ flex:1 1 240px; }
+.lc-tools select{ flex:0 0 auto; }
+.lc-admin{ margin-top:12px; padding:12px 14px; border-radius:8px; background:#fff8e6; border:1px solid #fde1a1; font-size:13px; display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+.lc-tabla{ width:100%; border-collapse:collapse; margin-top:8px; font-size:13.5px; }
+.lc-tabla th{ text-align:left; font-size:11.5px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; padding:6px 8px; border-bottom:1px solid #e1e5ea; }
+.lc-tabla td{ padding:8px; border-bottom:1px solid #eceff2; vertical-align:middle; }
+.lc-tabla td.num{ font-family:var(--font-mono,monospace); text-align:right; white-space:nowrap; }
+.lc-sec{ margin-top:16px; padding-top:12px; border-top:1px solid #e1e5ea; }
+.lc-sec h4{ margin:0 0 6px; font-size:14px; }
+.lc-acomodo{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.lc-acomodo label{ margin:0 0 3px; }
+`;
+  document.head.appendChild(st);
+}
+
+function lcCajasPorNumero(){
+  const mapa = new Map();
+  cacheCajas.forEach(c => {
+    const k = normCaja(c.caja || "");
+    if(k && !mapa.has(k)) mapa.set(k, c);
+  });
+  return mapa;
+}
+
+window.renderListaCajas = function(){
+
+  const cont = document.getElementById("listaCajasCont");
+  if(!cont) return;
+  lcEstilos();
+
+  const mapa = lcCajasPorNumero();
+  let max = 0;
+  const otras = [];
+  mapa.forEach((c,k) => {
+    const n = numeroDeCaja(k);
+    if(n !== null){ if(n > max) max = n; } else otras.push(c);
+  });
+
+  const txt = (document.getElementById("lcBuscar")?.value || "").trim().toLowerCase();
+  const filtro = document.getElementById("lcFiltro")?.value || "todas";
+
+  let existentes = 0, inexistentes = 0, pendientes = 0;
+  const tiles = [];
+
+  const resumenCaja = c => {
+    const comps = c.componentes || [];
+    const pzs = comps.reduce((t,x) => t + (Number(x.cantidad)||0), 0);
+    return { comps, pzs };
+  };
+
+  for(let n = 1; n <= max; n++){
+    const k = normCaja(String(n));
+    const c = mapa.get(k);
+    if(!c){
+      inexistentes++;
+      tiles.push({ tipo:"no", k, n, c:null });
+    } else {
+      existentes++;
+      if(esCajaPendiente(c)) pendientes++;
+      tiles.push({ tipo:"si", k, n, c });
+    }
+  }
+  otras.sort((a,b) => String(a.caja).localeCompare(String(b.caja), undefined, {numeric:true}))
+       .forEach(c => { existentes++; if(esCajaPendiente(c)) pendientes++; tiles.push({ tipo:"si", k:normCaja(c.caja), n:null, c }); });
+
+  const visibles = tiles.filter(t => {
+    if(filtro === "existentes" && t.tipo !== "si") return false;
+    if(filtro === "inexistentes" && t.tipo !== "no") return false;
+    if(filtro === "pendientes" && !(t.c && esCajaPendiente(t.c))) return false;
+    if(filtro === "acomodadas" && !(t.c && !esCajaPendiente(t.c))) return false;
+    if(!txt) return true;
+    if(t.tipo === "no") return ("caja " + t.k).toLowerCase().includes(txt) || String(t.n) === txt;
+    const comps = t.c.componentes || [];
+    return ("caja " + t.k + " " + (t.c.ubicacion||"")).toLowerCase().includes(txt) ||
+      comps.some(x => String(x.nombre||"").toLowerCase().includes(txt) || String(x.pn||"").toLowerCase().includes(txt));
+  });
+
+  const resumen = document.getElementById("lcResumen");
+  if(resumen){
+    resumen.innerHTML =
+      `<span class="lc-chip"><b>${existentes}</b> existentes</span>` +
+      `<span class="lc-chip"><b>${pendientes}</b> pendientes de acomodar</span>` +
+      `<span class="lc-chip"><b>${existentes - pendientes}</b> acomodadas</span>` +
+      `<span class="lc-chip"><b>${inexistentes}</b> inexistentes (de la 1 a la ${max})</span>`;
+  }
+
+  /* panel de actualización (solo admin) */
+  const adm = document.getElementById("lcAdmin");
+  if(adm){
+    if(isAdmin()){
+      const r = window.getResumenMigracion();
+      if(r.cajasPorImportar || r.cajasConLoopbackPorRenombrar){
+        adm.innerHTML = `<div class="lc-admin"><div><b>Actualización pendiente de aplicar</b><br>` +
+          `${r.cajasPorImportar} cajas del Excel por importar como pendientes · ` +
+          `${r.cajasConLoopbackPorRenombrar} cajas con loopbacks por renombrar en la base.</div>` +
+          `<button onclick="aplicarActualizacionMigracion()">Aplicar actualización</button></div>`;
+      } else {
+        adm.innerHTML = "";
+      }
+    } else adm.innerHTML = "";
+  }
+
+  if(!visibles.length){
+    cont.innerHTML = `<p style="color:var(--ink-soft);margin-top:12px;">No hay cajas con ese filtro.</p>`;
+  } else {
+    cont.innerHTML = `<div class="lc-grid">` + visibles.map(t => {
+      if(t.tipo === "no"){
+        return `<div class="lc-tile no"><b>CAJA ${trEscape(t.k)}</b><small>INEXISTENTE</small></div>`;
+      }
+      const c = t.c, { comps, pzs } = resumenCaja(c);
+      const pend = esCajaPendiente(c);
+      const clase = pend ? "pend" : (comps.length ? "" : "vacia");
+      const lugar = pend ? "PENDIENTE DE ACOMODAR" : (c.ubicacion || "");
+      return `<button type="button" class="lc-tile ${clase}" data-ubic="${trEscape(c.ubicacion)}">` +
+        `<b>CAJA ${trEscape(c.caja || c.ubicacion)}</b>` +
+        `<small>${trEscape(lugar)}</small>` +
+        `<small>${comps.length ? `${comps.length} ${comps.length === 1 ? "material" : "materiales"} · ${pzs} pzs` : "vacía"}</small></button>`;
+    }).join("") + `</div>`;
+    cont.querySelectorAll(".lc-tile[data-ubic]").forEach(b =>
+      b.addEventListener("click", () => lcAbrir(b.dataset.ubic)));
+  }
+
+  if(lcAbierta) lcPintarContenido();
+};
+
+function lcCerrar(){
+  lcAbierta = null;
+  document.getElementById("lcOverlay")?.remove();
+}
+
+function lcAbrir(ubicacion){
+
+  const c = cacheCajas.find(x => x.ubicacion === ubicacion);
+  if(!c) return;
+  lcEstilos();
+  lcCerrar();
+  lcAbierta = ubicacion;
+
+  const racks = cacheRacks.filter(r => r.status === "active");
+
+  const ov = document.createElement("div");
+  ov.className = "em-overlay";
+  ov.id = "lcOverlay";
+  ov.innerHTML = `
+<div class="em-box" style="width:min(680px,100%);">
+  <h3 id="lcTitulo"></h3>
+  <p class="em-sub" id="lcSub"></p>
+  <div id="lcContenido"></div>
+  <div class="lc-sec">
+    <h4 id="lcAcomodoTitulo"></h4>
+    <div class="lc-acomodo">
+      <div><label>Rack / Tarima</label><select id="lcRack">${racks.map(r => `<option value="${trEscape(r.nombre)}">${trEscape(nombreRack(r.nombre))}</option>`).join("")}</select></div>
+      <div><label>Nivel</label><select id="lcNivel"></select></div>
+      <div><label>Slot</label><select id="lcSlot"></select></div>
+    </div>
+    <div class="em-btns">
+      <button type="button" id="lcCerrarBtn" style="background:#e5e7eb;color:#111;">Cerrar</button>
+      <button type="button" id="lcAcomodarBtn">Acomodar aquí</button>
+    </div>
+  </div>
+</div>`;
+  document.body.appendChild(ov);
+
+  ov.addEventListener("click", e => { if(e.target === ov) lcCerrar(); });
+  document.getElementById("lcCerrarBtn").onclick = lcCerrar;
+
+  const selRack = document.getElementById("lcRack");
+  const selNivel = document.getElementById("lcNivel");
+  const selSlot = document.getElementById("lcSlot");
+  const opciones = n => Array.from({length:n}, (_,i) => `<option value="${i+1}">${pad2(i+1)}</option>`).join("");
+  const alCambiarRack = () => {
+    const r = racks.find(x => x.nombre === selRack.value);
+    selNivel.innerHTML = opciones(r ? Number(r.niveles) : 1);
+    selSlot.innerHTML = opciones(r ? Number(r.slots) : 1);
+  };
+  selRack.onchange = alCambiarRack;
+  alCambiarRack();
+  /* si ya está acomodada, preselecciona su posición actual */
+  if(!esCajaPendiente(c) && racks.some(r => r.nombre === c.rack)){
+    selRack.value = c.rack; alCambiarRack();
+    selNivel.value = String(c.nivel); selSlot.value = String(c.slot);
+  }
+
+  document.getElementById("lcAcomodarBtn").onclick = lcAcomodar;
+  lcPintarContenido();
+}
+
+function lcPintarContenido(){
+
+  const c = cacheCajas.find(x => x.ubicacion === lcAbierta);
+  if(!c){ lcCerrar(); return; }
+
+  const pend = esCajaPendiente(c);
+  const comps = c.componentes || [];
+  const pzs = comps.reduce((t,x) => t + (Number(x.cantidad)||0), 0);
+
+  document.getElementById("lcTitulo").textContent = `Caja ${c.caja || c.ubicacion}`;
+  document.getElementById("lcSub").textContent = pend
+    ? `Pendiente de acomodar · ${comps.length} materiales · ${pzs} piezas`
+    : `Acomodada en ${c.ubicacion} · ${comps.length} materiales · ${pzs} piezas`;
+  document.getElementById("lcAcomodoTitulo").textContent = pend ? "Acomodar en una posición" : "Reacomodar (mover a otra posición)";
+  document.getElementById("lcAcomodarBtn").textContent = pend ? "Acomodar aquí" : "Mover aquí";
+
+  const cont = document.getElementById("lcContenido");
+  if(!comps.length){
+    cont.innerHTML = `<p style="color:#6b7280;">Esta caja está vacía.</p>`;
+    return;
+  }
+  cont.innerHTML = `<table class="lc-tabla"><thead><tr><th>Material</th><th>PN</th><th style="text-align:right">Cant.</th><th></th></tr></thead><tbody>` +
+    comps.map((x,i) => `<tr><td>${trEscape(x.nombre)}${x.comentarios && x.comentarios !== "NO APLICA" ? `<br><small style="color:#6b7280">${trEscape(x.comentarios)}</small>` : ""}</td>` +
+      `<td>${trEscape(x.pn || "NO APLICA")}</td><td class="num">${Number(x.cantidad)||0}</td>` +
+      `<td><button type="button" class="btn-danger" data-i="${i}">Quitar</button></td></tr>`).join("") +
+    `</tbody></table>`;
+  cont.querySelectorAll("button[data-i]").forEach(b => b.onclick = () => lcQuitar(Number(b.dataset.i)));
+}
+
+async function lcQuitar(i){
+
+  const c = cacheCajas.find(x => x.ubicacion === lcAbierta);
+  const comp = c && (c.componentes || [])[i];
+  if(!comp) return;
+
+  const disp = Number(comp.cantidad) || 0;
+  const r = prompt(`¿Cuántas piezas quitar de "${comp.nombre}"? (disponibles: ${disp})`, String(disp));
+  if(r === null) return;
+  const cant = parseInt(r);
+  if(isNaN(cant) || cant <= 0 || cant > disp){ alert("Cantidad inválida"); return; }
+
+  const ubic = lcAbierta;
+  const ok = await window.salidaRapida(ubic, comp.nombre, cant, "QUITADO DESDE LISTA DE CAJAS");
+  if(ok){
+    window.renderListaCajas();
+    if(typeof window.renderRacksPage === "function") window.renderRacksPage();
+  }
+}
+
+async function lcAcomodar(){
+
+  const c = cacheCajas.find(x => x.ubicacion === lcAbierta);
+  if(!c) return;
+
+  const rack = document.getElementById("lcRack").value;
+  const nivel = document.getElementById("lcNivel").value;
+  const slot = document.getElementById("lcSlot").value;
+  if(!rack){ alert("Elige el rack o tarima de destino"); return; }
+
+  const destino = `${nombreRack(rack)} · nivel ${pad2(nivel)} · slot ${pad2(slot)}`;
+  const pend = esCajaPendiente(c);
+  if(!confirm(`${pend ? "Acomodar" : "Mover"} la caja ${c.caja || c.ubicacion} en ${destino}?`)) return;
+
+  let ok;
+  if(pend) ok = await window.acomodarCajaMigrada(c.ubicacion, rack, nivel, slot);
+  else ok = await window.moverCajaUbicacion(c.ubicacion, rack, nivel, slot, null, "REACOMODO DESDE LISTA DE CAJAS");
+
+  if(ok){
+    lcCerrar();
+    await loadCajas(true);
+    window.renderListaCajas();
+    if(typeof window.renderRacksPage === "function") window.renderRacksPage();
+  }
+}
+
 
 /* =====================
 RENDER PÁGINA RACKS & CAJAS
@@ -2023,6 +2490,8 @@ ${isAdmin() ? `<button class="btn-danger" onclick="eliminarRack('${r.nombre}')">
   });
 
   tablaRacks.innerHTML = html || `<tr><td colspan="7" style="color:var(--ink-soft);">Aún no hay racks registrados</td></tr>`;
+
+  if(typeof window.renderListaCajas === "function") window.renderListaCajas();
 
   // ---- grid de cajas por ubicación (solo racks activos) ----
   if(contBoxes){
@@ -2633,7 +3102,7 @@ async function cajaSueltaToolCrib(){
   const ubic = buildUbicacion(RACK_TOOLCRIB, 1, 1, numero);
   await setDoc(doc(db,"cajas",ubic), {
     rack: RACK_TOOLCRIB, nivel: 1, slot: 1, caja: numero, ubicacion: ubic,
-    componentes: [], migracion: false
+    componentes: [], migracion: false, acomodo2: true
   });
   return ubic;
 }
@@ -2956,7 +3425,8 @@ window.enviarCajaToolCrib = async function(ubicacionOrigen, seleccion, conCaja, 
         tamano: dataOrigen.tamano || null,
         capacidad: (typeof dataOrigen.capacidad === "number") ? dataOrigen.capacidad : null,
         migracion: false,
-        acomodada: true
+        acomodada: true,
+        acomodo2: true
       });
       lote.delete(origenRef);
     } else {
@@ -3078,6 +3548,7 @@ window.regresarDeToolCrib = async function(nombreMaterial, cantidad, destino){
       await setDoc(doc(db,"cajas",ubicacionDestino), {
         rack, nivel: parseInt(nivel), slot: parseInt(slot), caja: normCaja(caja), ubicacion: ubicacionDestino,
         migracion: false,
+        acomodo2: true,
         componentes: [{
           nombre: nombreMaterial, pn: cribData.pn || "NO APLICA", cantidad,
           comentarios: "Regresado de Tool Crib", responsable: getUser()
@@ -3371,7 +3842,8 @@ window.moverCajaUbicacion = async function(ubicacionOrigen, rackDestino, nivelDe
       capacidad: (typeof dataOrigen.capacidad === "number") ? dataOrigen.capacidad : null,
       // conserva si venía de la migración (ya acomodada) o si es caja nueva
       migracion: dataOrigen.migracion === true ? true : false,
-      ...(dataOrigen.acomodada === true ? { acomodada: true } : {})
+      ...(dataOrigen.acomodada === true ? { acomodada: true } : {}),
+      acomodo2: true          // una caja que se puede mover ya está acomodada
     });
 
     await deleteDoc(origenRef);
@@ -3967,7 +4439,7 @@ function trIniciar(){
   trIniciado = true;
 
   trEscuchar("cajas", snap => {
-    cacheCajas = snap.docs.map(d => ({ idDoc:d.id, ...d.data() }));
+    cacheCajas = snap.docs.map(d => prepararCaja(d.id, d.data()));
     recomponerToolCrib();
     etqSincronizar();
   });
