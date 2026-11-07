@@ -523,3 +523,9 @@ En **Movimientos → Material a Tool Crib**:
 - Dentro de una caja: quitar una parte de un material (cantidad + Quitar), quitar todo el material, agregar material y, si está vacía, **Destruir caja**.
 - Los números inexistentes se pueden pulsar para **agregar la caja** (queda vacía y pendiente de acomodar) y abrirla para agregarle material.
 - Nueva sección **Tool Crib anterior al reinicio** (solo admin): lista las cajas que estaban en el rack B con su posición anterior y las regresa ahí con un botón (todas o una por una).
+
+## Update: Previsualizar / editar / revertir la actualización de migración
+
+- El renombre de loopbacks ya NO se aplica en silencio: solo ocurre al aplicar la actualización.
+- **Previsualizar y actualizar** (Racks y Cajas → Lista de cajas, solo admin): muestra las cajas del Excel por importar y los loopbacks por renombrar; se pueden editar números de caja, materiales, PN, cantidades, comentarios y nombres nuevos, o desmarcar/quitar lo que no se quiera. No se guarda nada hasta pulsar "Aplicar".
+- **Revertir actualización:** borra las cajas importadas del Excel (desmarca por defecto las ya acomodadas o con cantidad distinta) y devuelve a los loopbacks su nombre anterior (se guarda `nombreOriginal` / `fusionados` en cada material renombrado).
