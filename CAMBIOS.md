@@ -529,3 +529,5 @@ En **Movimientos → Material a Tool Crib**:
 - El renombre de loopbacks ya NO se aplica en silencio: solo ocurre al aplicar la actualización.
 - **Previsualizar y actualizar** (Racks y Cajas → Lista de cajas, solo admin): muestra las cajas del Excel por importar y los loopbacks por renombrar; se pueden editar números de caja, materiales, PN, cantidades, comentarios y nombres nuevos, o desmarcar/quitar lo que no se quiera. No se guarda nada hasta pulsar "Aplicar".
 - **Revertir actualización:** borra las cajas importadas del Excel (desmarca por defecto las ya acomodadas o con cantidad distinta) y devuelve a los loopbacks su nombre anterior (se guarda `nombreOriginal` / `fusionados` en cada material renombrado).
+
+- **Revertir nombres ya aplicados:** en "Revertir actualización" hay una sección C con los loopbacks que tienen el nombre oficial pero sin registro del anterior; se escribe a qué nombre volver (para todos los 1.1 m y 0.5 m a la vez o uno por uno).

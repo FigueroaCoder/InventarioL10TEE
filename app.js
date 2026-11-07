@@ -2305,7 +2305,24 @@ window.revertirActualizacionMigracion = async function(){
   });
   const renombres = lbRevertibles().map(r => ({ ...r, incluir: true }));
 
-  if(!cajas.length && !renombres.length){
+  /* loopbacks que ya tienen el nombre oficial pero sin registro de cómo se llamaban
+     (p. ej. renombrados con la versión anterior): el administrador escribe el nombre anterior */
+  const idsImportadas = new Set(cajasImportadas().map(c => c.ubicacion));
+  const manuales = [];
+  cacheCajas.forEach(c => {
+    if(idsImportadas.has(c.ubicacion)) return;
+    (c.componentes || []).forEach(comp => {
+      if(!comp || comp.nombreOriginal || (comp.fusionados && comp.fusionados.length)) return;
+      const canon = nombreCanonLoopback(comp.nombre, comp.pn);
+      if(canon && lbTxt(comp.nombre) === lbTxt(canon)){
+        manuales.push({ ubic: c.ubicacion, caja: c.caja || c.ubicacion, actual: comp.nombre, pn: comp.pn || "",
+                        cantidad: Number(comp.cantidad) || 0, tipo: canon === LB_NOMBRE_11 ? "11" : "05", anterior: "", incluir: false });
+      }
+    });
+  });
+  const bulk = { "11": "", "05": "" };
+
+  if(!cajas.length && !renombres.length && !manuales.length){
     alert("No hay nada que revertir: no hay cajas importadas del Excel ni loopbacks renombrados con esta herramienta.");
     return false;
   }
@@ -2326,17 +2343,28 @@ window.revertirActualizacionMigracion = async function(){
         renombres.map((r,i) => `<tr><td><input type="checkbox" data-rr="${i}" ${r.incluir ? "checked" : ""}></td><td><b>${trEscape(r.caja)}</b></td>
           <td>${trEscape(r.actual)}</td><td>${trEscape(textoOriginales(r))}</td></tr>`).join("") + `</tbody></table>`
         : `<div class="pl-ok">No hay renombres por revertir.</div>`);
+    h += `<h4 class="pl-h5">C) Loopbacks con el nombre oficial SIN registro de su nombre anterior (${manuales.filter(x => x.incluir).length} marcados de ${manuales.length})</h4>` +
+      (manuales.length ? `<p class="em-sub" style="margin:4px 0;">Escribe cómo se llamaban antes. Lo que escribas arriba se copia a todos los de esa medida (y los marca); después puedes editar uno por uno.</p>
+        <div class="pl-head" style="margin:6px 0;">
+          <b>Todos los 1.1 m volverían a:</b><input type="text" style="width:240px" data-rb="11" value="${trEscape(bulk["11"])}" placeholder="Ej. LOOPBACK 1.1 M">
+          <b>Todos los 0.5 m volverían a:</b><input type="text" style="width:240px" data-rb="05" value="${trEscape(bulk["05"])}" placeholder="Ej. LOOPBACK 0.5 M"></div>
+        <table class="pl-tabla"><thead><tr><th></th><th>Caja</th><th>Nombre actual</th><th>Volvería a (editable)</th><th>Cant.</th></tr></thead><tbody>` +
+        manuales.map((m,i) => `<tr><td><input type="checkbox" data-rm="${i}" ${m.incluir ? "checked" : ""}></td><td><b>${trEscape(m.caja)}</b></td>
+          <td>${trEscape(m.actual)}</td><td><input type="text" data-rma="${i}" value="${trEscape(m.anterior)}"></td><td>${m.cantidad}</td></tr>`).join("") + `</tbody></table>`
+        : `<div class="pl-ok">No hay loopbacks de este tipo.</div>`);
     h += `<p class="pl-aviso" style="margin-top:10px;">Las cajas ya acomodadas o con cantidades distintas vienen desmarcadas: al borrarlas se perdería lo que se hizo con ellas.</p>`;
     document.getElementById("plCuerpo").innerHTML = h;
   };
 
   plAbrirModal("Revertir actualización",
-    "Esto deshace la importación del Excel y el cambio de nombre de loopbacks. Revisa y desmarca lo que quieras conservar.",
+    "Esto deshace la importación del Excel y el cambio de nombre de loopbacks (incluso los renombrados antes, escribiendo su nombre anterior en la sección C). Revisa y desmarca lo que quieras conservar.",
     "", "Revertir lo marcado", async () => {
 
       const borrar = cajas.filter(x => x.incluir), volver = renombres.filter(x => x.incluir);
-      if(!borrar.length && !volver.length){ alert("No hay nada seleccionado."); return; }
-      if(!confirm(`Se borrarán ${borrar.length} cajas importadas y se restaurará el nombre de ${volver.length} materiales. ¿Revertir?`)) return;
+      const manu = manuales.filter(x => x.incluir);
+      if(manu.some(m => !String(m.anterior).trim())){ alert("En la sección C hay loopbacks marcados sin nombre anterior. Escríbelo o desmárcalos."); return; }
+      if(!borrar.length && !volver.length && !manu.length){ alert("No hay nada seleccionado."); return; }
+      if(!confirm(`Se borrarán ${borrar.length} cajas importadas y se restaurará el nombre de ${volver.length + manu.length} materiales. ¿Revertir?`)) return;
 
       const btn = document.getElementById("plAplicar"); btn.disabled = true;
       try{
@@ -2344,6 +2372,8 @@ window.revertirActualizacionMigracion = async function(){
         /* nombres: se leen otra vez de la base para no pisar cambios recientes */
         const porCaja = new Map();
         volver.forEach(r => { if(!porCaja.has(r.ubic)) porCaja.set(r.ubic, []); porCaja.get(r.ubic).push(r); });
+        const manuPorCaja = new Map();
+        manu.forEach(m => { if(!manuPorCaja.has(m.ubic)) manuPorCaja.set(m.ubic, []); manuPorCaja.get(m.ubic).push(m); if(!porCaja.has(m.ubic)) porCaja.set(m.ubic, []); });
         const sinCaja = new Set(borrar.map(x => x.c.ubicacion));
         let lote = writeBatch(db), n = 0;
         for(const [ubic] of porCaja){
@@ -2351,8 +2381,13 @@ window.revertirActualizacionMigracion = async function(){
           const snap = await getDoc(doc(db,"cajas", ubic));
           if(!snap.exists()) continue;
           const nuevos = [];
+          const pendM = (manuPorCaja.get(ubic) || []).slice();
           (snap.data().componentes || []).forEach(x => {
             const { nombreOriginal, fusionados, ...resto } = x;
+            if(!nombreOriginal && !(fusionados && fusionados.length)){
+              const mi = pendM.findIndex(m => lbTxt(m.actual) === lbTxt(x.nombre));
+              if(mi >= 0){ nuevos.push({ ...resto, nombre: String(pendM[mi].anterior).trim() }); pendM.splice(mi,1); return; }
+            }
             if(fusionados && fusionados.length){
               const suma = fusionados.reduce((t,f) => t + (Number(f.cantidad)||0), 0);
               if(suma === (Number(x.cantidad)||0)){
@@ -2378,7 +2413,7 @@ window.revertirActualizacionMigracion = async function(){
         for(const x of borrar){ try{ await deleteDoc(doc(db,"etiquetas", etqId(etqNumCaja(x.c)))); }catch(e){ console.error(e); } }
 
         await addHist({ ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(), accion: "ACTUALIZACION",
-          ubicacion: `REVERSION · ${borrar.length} CAJAS BORRADAS · ${volver.length} NOMBRES RESTAURADOS`,
+          ubicacion: `REVERSION · ${borrar.length} CAJAS BORRADAS · ${volver.length + manu.length} NOMBRES RESTAURADOS`,
           nombre: "REVERSION DE ACTUALIZACION", cantidad: 0, responsable: getUser(),
           comentarios: "REVERSION DE IMPORTACION EXCEL Y NOMBRES DE LOOPBACKS", sinFila: true });
 
@@ -2396,8 +2431,19 @@ window.revertirActualizacionMigracion = async function(){
     });
 
   pintar();
+  document.getElementById("plCuerpo").addEventListener("input", e => {
+    const t = e.target;
+    if(t.dataset.rma !== undefined){ manuales[Number(t.dataset.rma)].anterior = t.value; }
+  });
   document.getElementById("plCuerpo").addEventListener("change", e => {
     const t = e.target;
+    if(t.dataset.rb !== undefined){
+      const v = t.value.trim();
+      bulk[t.dataset.rb] = t.value;
+      manuales.filter(m => m.tipo === t.dataset.rb).forEach(m => { m.anterior = v; m.incluir = !!v; });
+      pintar();
+    }
+    if(t.dataset.rm !== undefined){ manuales[Number(t.dataset.rm)].incluir = t.checked; pintar(); }
     if(t.dataset.rc !== undefined){ cajas[Number(t.dataset.rc)].incluir = t.checked; pintar(); }
     if(t.dataset.rr !== undefined){ renombres[Number(t.dataset.rr)].incluir = t.checked; pintar(); }
   });
