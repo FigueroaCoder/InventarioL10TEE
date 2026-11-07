@@ -248,6 +248,15 @@ function prepararCaja(id, data){
   return { idDoc: id, ...data };
 }
 
+/* escribe innerHTML solo si cambió (evita repintar y parpadear); devuelve true si cambió */
+function setHtmlSiCambia(el, html){
+  if(!el) return false;
+  if(el.__htmlPrev === html && el.innerHTML !== "") return false;
+  el.__htmlPrev = html;
+  el.innerHTML = html;
+  return true;
+}
+
 /* =====================
 CACHE
 ===================== */
@@ -1046,6 +1055,7 @@ window.crearCajaEnSlot = async function(rack, nivel, slot, opts){
 
   const ubicacion = buildUbicacion(rack, nivel, slot, cajaId);
 
+  window.mostrarCargando && window.mostrarCargando("Creando caja…");
   try{
 
     const cajaRef = doc(db,"cajas",ubicacion);
@@ -1077,6 +1087,8 @@ window.crearCajaEnSlot = async function(rack, nivel, slot, opts){
     console.error(e);
     alert("Error creando caja");
     return null;
+  }finally{
+    window.ocultarCargando && window.ocultarCargando();
   }
 
 };
@@ -2924,11 +2936,11 @@ window.renderListaCajas = function(){
 
   const resumen = document.getElementById("lcResumen");
   if(resumen){
-    resumen.innerHTML =
+    setHtmlSiCambia(resumen,
       `<span class="lc-chip"><b>${existentes}</b> existentes</span>` +
       `<span class="lc-chip"><b>${pendientes}</b> pendientes de acomodar</span>` +
       `<span class="lc-chip"><b>${existentes - pendientes}</b> acomodadas</span>` +
-      `<span class="lc-chip"><b>${inexistentes}</b> inexistentes (de la 1 a la ${max})</span>`;
+      `<span class="lc-chip"><b>${inexistentes}</b> inexistentes (de la 1 a la ${max})</span>`);
   }
 
   /* panel de actualización (solo admin) */
@@ -2945,9 +2957,9 @@ window.renderListaCajas = function(){
   }
 
   if(!visibles.length){
-    cont.innerHTML = `<p style="color:var(--ink-soft);margin-top:12px;">No hay cajas con ese filtro.</p>`;
+    setHtmlSiCambia(cont, `<p style="color:var(--ink-soft);margin-top:12px;">No hay cajas con ese filtro.</p>`);
   } else {
-    cont.innerHTML = `<div class="lc-grid">` + visibles.map(t => {
+    const cambioGrid = setHtmlSiCambia(cont, `<div class="lc-grid">` + visibles.map(t => {
       if(t.tipo === "no"){
         return `<div class="lc-tile no" role="button" tabindex="0" data-nueva="${trEscape(t.k)}"><b>CAJA ${trEscape(t.k)}</b><small>INEXISTENTE</small><small class="lc-nueva">+ Agregar caja</small></div>`;
       }
@@ -2959,11 +2971,13 @@ window.renderListaCajas = function(){
         `<b>CAJA ${trEscape(c.caja || c.ubicacion)}</b>` +
         `<small>${trEscape(lugar)}</small>` +
         `<small>${comps.length ? `${comps.length} ${comps.length === 1 ? "material" : "materiales"} · ${pzs} pzs` : "vacía"}</small></div>`;
-    }).join("") + `</div>`;
-    cont.querySelectorAll(".lc-tile[data-ubic]").forEach(b =>
-      b.addEventListener("click", () => lcAbrir(b.dataset.ubic)));
-    cont.querySelectorAll(".lc-tile[data-nueva]").forEach(b =>
-      b.addEventListener("click", () => lcCrearCaja(b.dataset.nueva)));
+    }).join("") + `</div>`);
+    if(cambioGrid){
+      cont.querySelectorAll(".lc-tile[data-ubic]").forEach(b =>
+        b.addEventListener("click", () => lcAbrir(b.dataset.ubic)));
+      cont.querySelectorAll(".lc-tile[data-nueva]").forEach(b =>
+        b.addEventListener("click", () => lcCrearCaja(b.dataset.nueva)));
+    }
   }
 
   if(lcAbierta) lcPintarContenido();
@@ -3328,7 +3342,7 @@ ${isAdmin() ? `<button class="btn-danger" onclick="eliminarRack('${r.nombre}')">
 </tr>`;
   });
 
-  tablaRacks.innerHTML = html || `<tr><td colspan="7" style="color:var(--ink-soft);">Aún no hay racks registrados</td></tr>`;
+  setHtmlSiCambia(tablaRacks, html || `<tr><td colspan="7" style="color:var(--ink-soft);">Aún no hay racks registrados</td></tr>`);
 
   if(typeof window.renderListaCajas === "function") window.renderListaCajas();
 
@@ -3400,13 +3414,21 @@ ${isAdmin() ? `<button class="slot-add slot-del" title="Eliminar caja" onclick="
       gridHtml += `</div>`;
     });
 
-    contBoxes.innerHTML = gridHtml || `<p style="color:var(--ink-soft);">No hay racks activos para mostrar.</p>`;
+    setHtmlSiCambia(contBoxes, gridHtml || `<p style="color:var(--ink-soft);">No hay racks activos para mostrar.</p>`);
   }
 
   // ---- VISOR 3D (misma información, en tiempo real) ----
   if(window.Rack3D && typeof window.Rack3D.rebuild === "function"){
     const activos = cacheRacks.filter(r => r.status === "active");
-    window.Rack3D.rebuild(activos, cacheCajas, true);
+    const firma3D = JSON.stringify([
+      activos.map(r => [r.nombre, r.niveles, r.slots, r.status]),
+      cacheCajas.map(c => [c.ubicacion, c.caja, c.estado || "", c.tamano || "", c.acomodo2 === true,
+        (c.componentes || []).map(x => [x && x.nombre, x && x.cantidad, x && x.pn, x && x.categoria || ""])])
+    ]);
+    if(firma3D !== window.__firma3D){
+      window.__firma3D = firma3D;
+      window.Rack3D.rebuild(activos, cacheCajas, true);
+    }
 
     const infoCajas = document.getElementById("contadorCajas3D");
     if(infoCajas){
@@ -3424,11 +3446,11 @@ ${isAdmin() ? `<button class="slot-add slot-del" title="Eliminar caja" onclick="
       const materialesToolCrib = cacheToolCrib.length;
 
       const plural = (n, uno, varios) => n === 1 ? uno : varios;
-      infoCajas.innerHTML =
+      setHtmlSiCambia(infoCajas,
         `<span class="stat-chip"><i class="dot dot-cajas"></i><b>${totalCajas}</b><em>${plural(totalCajas, "caja", "cajas")}</em></span>` +
         (pendientes.length ? `<span class="stat-chip"><i class="dot dot-pend"></i><b>${pendientes.length}</b><em>${plural(pendientes.length, "caja pendiente", "cajas pendientes")} de acomodar</em></span>` : "") +
         `<span class="stat-chip"><i class="dot dot-area"></i><b>${materialesArea.size}</b><em>${plural(materialesArea.size, "material distinto", "materiales distintos")} en el área</em></span>` +
-        `<span class="stat-chip"><i class="dot dot-tool"></i><b>${materialesToolCrib}</b><em>${plural(materialesToolCrib, "material distinto", "materiales distintos")} en Tool Crib</em></span>`;
+        `<span class="stat-chip"><i class="dot dot-tool"></i><b>${materialesToolCrib}</b><em>${plural(materialesToolCrib, "material distinto", "materiales distintos")} en Tool Crib</em></span>`);
     }
   }
 
@@ -5645,5 +5667,66 @@ input:not([type]), input[type="text"], input[type="search"], input[type="tel"], 
 input::placeholder, textarea::placeholder{ text-transform:none; }
 `;
   document.head.appendChild(st);
+
+})();
+
+
+/* =====================================================
+   AVISO DE "PROCESANDO" — evita ver el parpadeo al guardar
+   Mientras se guarda una acción (crear caja, entrada, salida, status, tamaño,
+   categoría, acomodo, mover caja...) se muestra un aviso centrado con fondo
+   opaco; se quita solo cuando la pantalla ya se actualizó.
+   ===================================================== */
+(function(){
+
+  let usos = 0, timer = null, el = null;
+
+  function crear(){
+    if(el) return el;
+    const st = document.createElement("style");
+    st.textContent = `
+.cg-overlay{ position:fixed; inset:0; z-index:200000; display:flex; align-items:center; justify-content:center;
+  background:rgba(12,14,18,.82); opacity:0; pointer-events:none; transition:opacity .12s ease; }
+.cg-overlay.on{ opacity:1; pointer-events:auto; }
+.cg-card{ display:flex; align-items:center; gap:14px; padding:18px 26px; border-radius:12px; background:#12151b;
+  border:1px solid #2a3140; color:#fff; font:600 15px/1.2 'Inter',system-ui,sans-serif; letter-spacing:.3px; box-shadow:0 20px 50px -18px rgba(0,0,0,.7); }
+.cg-spin{ width:22px; height:22px; border-radius:50%; border:3px solid #3a4152; border-top-color:#ff5a1f; animation:cgspin .8s linear infinite; }
+@keyframes cgspin{ to{ transform:rotate(360deg); } }`;
+    document.head.appendChild(st);
+    el = document.createElement("div");
+    el.className = "cg-overlay";
+    el.innerHTML = `<div class="cg-card"><span class="cg-spin"></span><span class="cg-t">Procesando acción…</span></div>`;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  window.mostrarCargando = function(texto){
+    if(!document.body) return;
+    usos++;
+    clearTimeout(timer);
+    const e = crear();
+    e.querySelector(".cg-t").textContent = texto || "Procesando acción…";
+    e.classList.add("on");
+  };
+
+  window.ocultarCargando = function(){
+    usos = Math.max(0, usos - 1);
+    if(usos > 0) return;
+    clearTimeout(timer);
+    /* un momento extra para que termine el refresco en vivo y no se vea el repintado */
+    timer = setTimeout(() => { if(el && usos === 0) el.classList.remove("on"); }, 700);
+  };
+
+  ["entradaRapida","salidaRapida","setEstadoCaja","setTamanoCaja","setCategoriaMaterial",
+   "acomodarCajaMigrada","moverCajaUbicacion","moverMaterialEntreCajas"].forEach(nombre => {
+    const original = window[nombre];
+    if(typeof original !== "function") return;
+    const textos = { entradaRapida:"Registrando entrada…", salidaRapida:"Registrando salida…", acomodarCajaMigrada:"Acomodando caja…", moverCajaUbicacion:"Moviendo caja…" };
+    window[nombre] = async function(...args){
+      window.mostrarCargando(textos[nombre] || "Procesando acción…");
+      try{ return await original.apply(this, args); }
+      finally{ window.ocultarCargando(); }
+    };
+  });
 
 })();

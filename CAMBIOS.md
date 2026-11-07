@@ -540,3 +540,8 @@ En **Movimientos → Material a Tool Crib**:
 - **Botón "Regresar loopbacks al nombre anterior":** busca el nombre que tenía cada loopback antes de la actualización (registro guardado → ediciones del Historial → movimientos anteriores de esa caja en el Historial → etiqueta de la caja → nombre anterior más usado en el Historial para esa medida) y lo propone ya marcado; se puede editar y confirmar.
 
 - **Acomodo masivo (solo admin, panel de la Lista de cajas):** se pegan listas de cajas por rack/nivel/slot, se previsualiza qué pasaría con cada una (acomodar, mover, crear desde el Excel, omitir inexistentes), se detectan errores (caja en dos grupos, posición inexistente) y se acomoda todo en una sola operación.
+
+## Update: sin parpadeo al crear cajas o mover material
+
+- Mientras se guarda una acción (crear caja, entrada, salida, status, tamaño, categoría, acomodo, mover caja) aparece un aviso centrado "Procesando acción…" con fondo opaco; se quita solo cuando la pantalla ya se actualizó.
+- Las vistas (tabla de racks, lista de cajas, contadores) ya no se repintan si su contenido no cambió, y el modelo 3D solo se reconstruye cuando cambió algo que se dibuja (antes se reconstruía dos veces por cada acción: una al guardar y otra por el aviso en tiempo real).
