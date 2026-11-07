@@ -531,3 +531,5 @@ En **Movimientos → Material a Tool Crib**:
 - **Revertir actualización:** borra las cajas importadas del Excel (desmarca por defecto las ya acomodadas o con cantidad distinta) y devuelve a los loopbacks su nombre anterior (se guarda `nombreOriginal` / `fusionados` en cada material renombrado).
 
 - **Revertir nombres ya aplicados:** en "Revertir actualización" hay una sección C con los loopbacks que tienen el nombre oficial pero sin registro del anterior; se escribe a qué nombre volver (para todos los 1.1 m y 0.5 m a la vez o uno por uno).
+
+- Panel de la Lista de cajas: nuevo botón **Revertir cambio de nombres** (lista todos los loopbacks con nombre NVIDIA, permite editar a qué nombre vuelve cada uno y confirmar). El anterior "Revertir actualización" pasó a llamarse **Revertir importación Excel**.

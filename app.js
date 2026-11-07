@@ -2056,7 +2056,8 @@ window.getResumenMigracion = function(){
     cajasPorImportar: excelFaltantes().length,
     cajasConLoopbackPorRenombrar: new Set(lbPorRenombrar().map(i => i.ubic)).size,
     importadas: cajasImportadas().length,
-    renombradosRevertibles: lbRevertibles().length
+    renombradosRevertibles: lbRevertibles().length,
+    loopbacksEnCajas: lbFilasNombres().length
   };
 };
 
@@ -2450,6 +2451,127 @@ window.revertirActualizacionMigracion = async function(){
   return true;
 };
 
+/* ---------- 3) REVERTIR SOLO EL CAMBIO DE NOMBRES DE LOOPBACKS ---------- */
+
+function lbFilasNombres(){
+  const importadas = new Set(cajasImportadas().map(c => c.ubicacion));
+  const filas = [];
+  cacheCajas.forEach(c => {
+    if(importadas.has(c.ubicacion)) return;
+    (c.componentes || []).forEach(comp => {
+      if(!comp) return;
+      const canon = nombreCanonLoopback(comp.nombre, comp.pn);
+      if(!canon) return;
+      const reg = comp.fusionados && comp.fusionados.length;
+      filas.push({
+        ubic: c.ubicacion, caja: c.caja || c.ubicacion, actual: String(comp.nombre ?? ""), pn: comp.pn || "",
+        cantidad: Number(comp.cantidad) || 0, tipo: canon === LB_NOMBRE_11 ? "11" : "05",
+        registro: reg ? comp.fusionados.map(f => `${f.nombre} × ${f.cantidad}`).join(" + ") : (comp.nombreOriginal || ""),
+        anterior: reg ? "" : String(comp.nombreOriginal || ""),
+        incluir: !!(reg || comp.nombreOriginal)
+      });
+    });
+  });
+  return filas;
+}
+
+window.revertirNombresLoopbacks = async function(){
+
+  if(bloquearSiNoAdmin("Solo el administrador puede revertir el cambio de nombres.")) return false;
+  await loadCajas(true);
+
+  const filas = lbFilasNombres();
+  if(!filas.length){ alert("No hay loopbacks registrados en las cajas."); return false; }
+  const bulk = { "11": "", "05": "" };
+
+  const pintar = () => {
+    document.getElementById("plCuerpo").innerHTML =
+      `<p class="em-sub" style="margin:4px 0;">Estos son todos los loopbacks que hay en cajas. Los que ya tienen guardado su nombre anterior vienen marcados; para los demás escribe a qué nombre deben volver (arriba puedes poner uno para todos los 1.1 m y otro para todos los 0.5 m).</p>
+       <div class="pl-head" style="margin:6px 0;">
+         <b>Todos los 1.1 m volverían a:</b><input type="text" style="width:240px" data-rb="11" value="${trEscape(bulk["11"])}" placeholder="Ej. LOOPBACK 1.1 M">
+         <b>Todos los 0.5 m volverían a:</b><input type="text" style="width:240px" data-rb="05" value="${trEscape(bulk["05"])}" placeholder="Ej. LOOPBACK 0.5 M"></div>
+       <h4 class="pl-h5">${filas.filter(f => f.incluir).length} marcados de ${filas.length}</h4>
+       <table class="pl-tabla"><thead><tr><th></th><th>Caja</th><th>Nombre actual</th><th>Volvería a (editable)</th><th>Cant.</th></tr></thead><tbody>` +
+      filas.map((f,i) => `<tr><td><input type="checkbox" data-rf="${i}" ${f.incluir ? "checked" : ""}></td><td><b>${trEscape(f.caja)}</b></td>
+        <td>${trEscape(f.actual)}</td>
+        <td>${f.registro && f.anterior === "" ? `<span class="pl-ok">${trEscape(f.registro)} (guardado)</span>` : `<input type="text" data-rfa="${i}" value="${trEscape(f.anterior)}">`}</td>
+        <td>${f.cantidad}</td></tr>`).join("") + `</tbody></table>`;
+  };
+
+  plAbrirModal("Revertir cambio de nombres de loopbacks",
+    "Revisa y edita a qué nombre volvería cada loopback. No se guarda nada hasta pulsar “Revertir lo marcado”.",
+    "", "Revertir lo marcado", async () => {
+
+      const sel = filas.filter(f => f.incluir);
+      if(!sel.length){ alert("No hay nada seleccionado."); return; }
+      const tieneRegistroFusion = f => !!f.registro && f.anterior === "";   // se restaura con lo guardado
+      if(sel.some(f => !tieneRegistroFusion(f) && !String(f.anterior).trim())){
+        alert("Hay loopbacks marcados sin nombre anterior. Escríbelo o desmárcalos."); return;
+      }
+      if(!confirm(`Se restaurará el nombre de ${sel.length} loopbacks. ¿Continuar?`)) return;
+
+      const btn = document.getElementById("plAplicar"); btn.disabled = true;
+      try{
+        const porCaja = new Map();
+        sel.forEach(f => { if(!porCaja.has(f.ubic)) porCaja.set(f.ubic, []); porCaja.get(f.ubic).push(f); });
+        let lote = writeBatch(db), n = 0;
+        for(const [ubic, items] of porCaja){
+          const snap = await getDoc(doc(db,"cajas", ubic));
+          if(!snap.exists()) continue;
+          const pend = items.slice();
+          const nuevos = [];
+          (snap.data().componentes || []).forEach(x => {
+            const k = pend.findIndex(f => lbTxt(f.actual) === lbTxt(x.nombre));
+            if(k < 0){ nuevos.push(x); return; }
+            const f = pend.splice(k,1)[0];
+            const { nombreOriginal, fusionados, ...resto } = x;
+            if(fusionados && fusionados.length){
+              const suma = fusionados.reduce((t,g) => t + (Number(g.cantidad)||0), 0);
+              if(suma === (Number(x.cantidad)||0)){
+                fusionados.forEach(g => nuevos.push({ ...resto, nombre: g.nombre, pn: g.pn || resto.pn, cantidad: Number(g.cantidad)||0, comentarios: g.comentarios || resto.comentarios }));
+              } else nuevos.push({ ...resto, nombre: fusionados[0].nombre });
+            } else {
+              nuevos.push({ ...resto, nombre: String(f.anterior).trim() });
+            }
+          });
+          lote.update(doc(db,"cajas", ubic), { componentes: nuevos });
+          if(++n % 400 === 0){ await lote.commit(); lote = writeBatch(db); }
+        }
+        await lote.commit();
+        await addHist({ ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(), accion: "ACTUALIZACION",
+          ubicacion: `${porCaja.size} CAJAS`, nombre: "REVERSION DE NOMBRES DE LOOPBACKS", cantidad: 0,
+          responsable: getUser(), comentarios: "REVERSION DEL NOMBRE NVIDIA 1600 Gbps", sinFila: true });
+        plCerrar();
+        await loadCajas(true);
+        if(typeof window.showStock === "function") await window.showStock(true);
+        if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+        alert("Nombres restaurados.");
+      }catch(e){
+        console.error(e);
+        alert("Error revirtiendo nombres: " + (e && e.message ? e.message : e));
+        btn.disabled = false;
+      }
+    });
+
+  pintar();
+  const cuerpo = document.getElementById("plCuerpo");
+  cuerpo.addEventListener("input", e => {
+    const t = e.target;
+    if(t.dataset.rfa !== undefined) filas[Number(t.dataset.rfa)].anterior = t.value;
+  });
+  cuerpo.addEventListener("change", e => {
+    const t = e.target;
+    if(t.dataset.rb !== undefined){
+      const v = t.value.trim();
+      bulk[t.dataset.rb] = t.value;
+      filas.filter(f => f.tipo === t.dataset.rb && !(f.registro && f.anterior === "")).forEach(f => { f.anterior = v; f.incluir = !!v; });
+      pintar();
+    }
+    if(t.dataset.rf !== undefined){ filas[Number(t.dataset.rf)].incluir = t.checked; pintar(); }
+  });
+  return true;
+};
+
 /* =====================================================
    LISTA DE CAJAS (1 → última) — existentes e inexistentes
    Clic en una caja: ver contenido, quitar material y acomodarla/moverla.
@@ -2573,9 +2695,9 @@ window.renderListaCajas = function(){
       const r = window.getResumenMigracion();
       adm.innerHTML = `<div class="lc-admin"><div><b>Actualización de migración</b> (solo administrador)<br>` +
         `${r.cajasPorImportar} cajas del Excel por importar · ${r.cajasConLoopbackPorRenombrar} cajas con loopbacks por renombrar · ` +
-        `${r.importadas} cajas importadas · ${r.renombradosRevertibles} loopbacks renombrados.</div>` +
+        `${r.importadas} cajas importadas · ${r.loopbacksEnCajas} loopbacks con nombre NVIDIA en cajas.</div>` +
         `<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" onclick="aplicarActualizacionMigracion()">Previsualizar y actualizar</button>` +
-        `<button type="button" class="btn-danger" onclick="revertirActualizacionMigracion()">Revertir actualización</button></div></div>`;
+        `<button type="button" class="btn-danger" onclick="revertirNombresLoopbacks()">Revertir cambio de nombres</button><button type="button" class="btn-danger" onclick="revertirActualizacionMigracion()">Revertir importación Excel</button></div></div>`;
     } else adm.innerHTML = "";
   }
 
