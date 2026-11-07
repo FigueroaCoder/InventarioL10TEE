@@ -2653,7 +2653,8 @@ window.revertirNombresLoopbacks = async function(){   // botón: "Regresar loopb
 const AM_LISTAS_INICIALES = [
   { nivel: 2, slot: 3, texto: "143 145 149 147 148 162 136 153 137 138 139 141 142 150 155 132 152 154" },
   { nivel: 2, slot: 2, texto: "156 133 159 126 157 135 160 151 158 64 63 61 36 129 36 77 125 127 163 21" },
-  { nivel: 2, slot: 1, texto: "74 127 70 161 176 67 28 110 79 27 2 72 71 62 16 17 20 30 78 60 32 31 24" }
+  { nivel: 2, slot: 1, texto: "74 127 70 161 176 67 28 110 79 27 2 72 71 62 16 17 20 30 78 60 32 31 24" },
+  { nivel: 3, slot: 3, texto: "47 48 57 39 44 53 40 43 45 37 50 42 51 52 49 186 121" }
 ];
 
 window.abrirAcomodoMasivo = async function(){
