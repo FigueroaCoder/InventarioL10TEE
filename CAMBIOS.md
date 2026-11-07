@@ -536,3 +536,5 @@ En **Movimientos → Material a Tool Crib**:
 
 - **Nombre oficial con LOOPBACK primero:** `LOOPBACK NVIDIA 1600 Gbps 1.1 m` / `LOOPBACK NVIDIA 1600 Gbps 0.5 m` (también para las cajas nuevas del Excel). Sigue siendo editable en la previsualización antes de aplicar.
 - **Revertir nombres:** cada loopback trae por defecto su nombre anterior (registro guardado → Historial → etiqueta de la caja), marcado y editable.
+
+- **Botón "Regresar loopbacks al nombre anterior":** busca el nombre que tenía cada loopback antes de la actualización (registro guardado → ediciones del Historial → movimientos anteriores de esa caja en el Historial → etiqueta de la caja → nombre anterior más usado en el Historial para esa medida) y lo propone ya marcado; se puede editar y confirmar.

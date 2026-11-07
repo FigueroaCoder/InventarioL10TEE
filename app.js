@@ -2460,29 +2460,65 @@ window.revertirActualizacionMigracion = async function(){
    1) el registro guardado al renombrar con esta herramienta, 2) Historial (ediciones "nombre X → Y"),
    3) la etiqueta de la caja (conserva el nombre con el que se creó). Si no hay nada, queda vacío. */
 async function lbSugerencias(){
-  const hist = new Map();
+  const hist = new Map();                 // "nuevo nombre" -> nombre anterior (ediciones del Historial)
+  const porUbic = new Map();              // ubicación -> [{ts, nombre, tipo}]
+  const conteo = { "11": new Map(), "05": new Map() };   // nombres usados en el Historial por medida
+
+  const esOficial = n => { const t = lbTxt(n); return t === lbTxt(LB_NOMBRE_11) || t === lbTxt(LB_NOMBRE_05) ||
+                           t === "nvidia 1600 gbps 1.1 m" || t === "nvidia 1600 gbps 0.5 m"; };
+  const tipoDe = n => { const c = nombreCanonLoopback(n, ""); return c === LB_NOMBRE_11 ? "11" : c === LB_NOMBRE_05 ? "05" : null; };
+
   try{
     const snap = await getDocs(collection(db,"historial"));
     const arr = [];
-    snap.forEach(d => { const h = d.data(); if(h && h.accion === "ACTUALIZACION" && /nombre "/i.test(h.comentarios || "")) arr.push(h); });
+    snap.forEach(d => arr.push(d.data()));
     arr.sort((a,b) => (a.ts || 0) - (b.ts || 0));
-    arr.forEach(h => { const m = /nombre "(.+?)" → "(.+?)"/.exec(h.comentarios); if(m) hist.set(lbTxt(m[2]), m[1]); });
+    arr.forEach(h => {
+      if(!h) return;
+      if(h.accion === "ACTUALIZACION"){
+        const m = /nombre "(.+?)" → "(.+?)"/.exec(h.comentarios || "");
+        if(m) hist.set(lbTxt(m[2]), m[1]);
+      }
+      const nom = String(h.nombre || "");
+      const t = tipoDe(nom);
+      if(!t || esOficial(nom)) return;          // solo nombres ANTERIORES a la actualización
+      conteo[t].set(nom, (conteo[t].get(nom) || 0) + 1);
+      String(h.ubicacion || "").split("→").map(x => x.trim()).filter(Boolean).forEach(u => {
+        if(!porUbic.has(u)) porUbic.set(u, []);
+        porUbic.get(u).push({ ts: h.ts || 0, nombre: nom, tipo: t });
+      });
+    });
   }catch(e){ console.error("Sugerencias (historial):", e); }
+
+  const masUsado = t => { let mejor = "", n = 0; conteo[t].forEach((v,k) => { if(v > n){ n = v; mejor = k; } }); return mejor; };
 
   return (c, comp) => {
     if(comp.nombreOriginal) return { nombre: String(comp.nombreOriginal), fuente: "guardado" };
     const h = hist.get(lbTxt(comp.nombre));
     if(h && lbTxt(h) !== lbTxt(comp.nombre)) return { nombre: h, fuente: "historial" };
+
+    const tipoC = nombreCanonLoopback(comp.nombre, comp.pn);
+    const t = tipoC === LB_NOMBRE_11 ? "11" : tipoC === LB_NOMBRE_05 ? "05" : null;
+
+    /* movimientos anteriores de ESTA caja en el Historial (el más reciente) */
+    const lst = (porUbic.get(c.ubicacion) || []).filter(x => x.tipo === t);
+    if(lst.length) return { nombre: lst[lst.length - 1].nombre, fuente: "historial de la caja" };
+
+    /* etiqueta de la caja (conserva el nombre con el que se creó) */
     const e = (typeof cacheEtiquetas !== "undefined" ? cacheEtiquetas : []).find(x => x.idDoc === etqId(etqNumCaja(c)));
-    if(!e) return null;
-    const nAct = etqNorm(comp.nombre), pAct = etqNorm(comp.pn);
-    const tipo = nombreCanonLoopback(comp.nombre, comp.pn);
-    const mats = e.materiales || [];
-    let m = (pAct && pAct !== "NO APLICA") ? mats.find(x => x.nombre !== nAct && etqNorm(x.pn) === pAct) : null;
-    if(!m && tipo) m = mats.find(x => x.nombre !== nAct && nombreCanonLoopback(x.nombre, x.pn) === tipo);
-    if(m) return { nombre: m.nombre, fuente: "etiqueta" };
-    const f = tipo ? (e.filas || []).find(x => x.nom && x.nom !== nAct && nombreCanonLoopback(x.nom, "") === tipo) : null;
-    return f ? { nombre: f.nom, fuente: "etiqueta" } : null;
+    if(e){
+      const nAct = etqNorm(comp.nombre), pAct = etqNorm(comp.pn);
+      const mats = e.materiales || [];
+      let m = (pAct && pAct !== "NO APLICA") ? mats.find(x => x.nombre !== nAct && !esOficial(x.nombre) && etqNorm(x.pn) === pAct) : null;
+      if(!m && t) m = mats.find(x => x.nombre !== nAct && !esOficial(x.nombre) && tipoDe(x.nombre) === t);
+      if(m) return { nombre: m.nombre, fuente: "etiqueta" };
+      const f = t ? (e.filas || []).find(x => x.nom && x.nom !== nAct && !esOficial(x.nom) && tipoDe(x.nom) === t) : null;
+      if(f) return { nombre: f.nom, fuente: "etiqueta" };
+    }
+
+    /* el nombre anterior más usado en el Historial para esa medida */
+    const g = t ? masUsado(t) : "";
+    return g ? { nombre: g, fuente: "más usado en el Historial" } : null;
   };
 }
 
@@ -2510,7 +2546,7 @@ function lbFilasNombres(sug){
   return filas;
 }
 
-window.revertirNombresLoopbacks = async function(){
+window.revertirNombresLoopbacks = async function(){   // botón: "Regresar loopbacks a su nombre anterior"
 
   if(bloquearSiNoAdmin("Solo el administrador puede revertir el cambio de nombres.")) return false;
   await loadCajas(true);
@@ -2533,9 +2569,9 @@ window.revertirNombresLoopbacks = async function(){
         <td>${f.cantidad}</td></tr>`).join("") + `</tbody></table>`;
   };
 
-  plAbrirModal("Revertir cambio de nombres de loopbacks",
-    "Revisa y edita a qué nombre volvería cada loopback. No se guarda nada hasta pulsar “Revertir lo marcado”.",
-    "", "Revertir lo marcado", async () => {
+  plAbrirModal("Regresar loopbacks a su nombre anterior",
+    "Cada loopback vuelve al nombre que tenía antes de la actualización (se busca en el registro, el Historial y las etiquetas). Revisa y edita si algo no cuadra; no se guarda nada hasta pulsar “Regresar al nombre anterior”.",
+    "", "Regresar al nombre anterior", async () => {
 
       const sel = filas.filter(f => f.incluir);
       if(!sel.length){ alert("No hay nada seleccionado."); return; }
@@ -2732,7 +2768,7 @@ window.renderListaCajas = function(){
         `${r.cajasPorImportar} cajas del Excel por importar · ${r.cajasConLoopbackPorRenombrar} cajas con loopbacks por renombrar · ` +
         `${r.importadas} cajas importadas · ${r.loopbacksEnCajas} loopbacks con nombre NVIDIA en cajas.</div>` +
         `<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" onclick="aplicarActualizacionMigracion()">Previsualizar y actualizar</button>` +
-        `<button type="button" class="btn-danger" onclick="revertirNombresLoopbacks()">Revertir cambio de nombres</button><button type="button" class="btn-danger" onclick="revertirActualizacionMigracion()">Revertir importación Excel</button></div></div>`;
+        `<button type="button" class="btn-danger" onclick="revertirNombresLoopbacks()">Regresar loopbacks al nombre anterior</button><button type="button" class="btn-danger" onclick="revertirActualizacionMigracion()">Revertir importación Excel</button></div></div>`;
     } else adm.innerHTML = "";
   }
 
