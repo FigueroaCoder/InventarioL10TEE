@@ -2167,15 +2167,17 @@ function lcEstilos(){
   st.id = "lcEstilos";
   st.textContent = `
 .lc-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; margin-top:12px; }
-.lc-tile{ border:1px solid var(--line,#e1e5ea); border-left:4px solid #1f9d55; border-radius:8px; background:#fff; padding:9px 10px; cursor:pointer; text-align:left; font:inherit; color:inherit; min-height:74px; display:block; width:100%; }
+.lc-tile{ border:1px solid var(--line,#e1e5ea); border-left:4px solid #1f9d55; border-radius:8px; background:#fff !important; color:#151920 !important; padding:9px 10px; cursor:pointer; text-align:left; font:inherit; color:inherit; min-height:74px; display:block; width:100%; }
 .lc-tile:hover{ box-shadow:0 8px 18px -10px rgba(15,20,30,.4); transform:translateY(-1px); }
 .lc-tile b{ font-family:var(--font-mono,monospace); font-size:15px; display:block; }
-.lc-tile small{ display:block; color:var(--ink-muted,#6b7280); font-size:11.5px; line-height:1.35; margin-top:2px; }
+.lc-tile small{ display:block; color:#6b7280 !important; font-size:11.5px; line-height:1.35; margin-top:2px; }
 .lc-tile.pend{ border-left-color:#facc15; }
 .lc-tile.vacia{ border-left-color:#f87171; }
-.lc-tile.no{ border-style:dashed; border-left:4px dashed #c4c9d4; background:#f4f5f7; cursor:default; color:#9aa1ad; }
-.lc-tile.no:hover{ box-shadow:none; transform:none; }
-.lc-tile.no small{ color:#9aa1ad; font-weight:700; letter-spacing:.6px; }
+.lc-tile.no{ border-style:dashed; border-left:4px dashed #c4c9d4; background:#f4f5f7 !important; color:#6b7280 !important; }
+.lc-tile.no:hover{ background:#fff3ec !important; }
+.lc-tile.no small{ color:#9aa1ad !important; font-weight:700; letter-spacing:.6px; }
+.lc-tile b, .lc-tile small{ text-transform:none; }
+.lc-tile.no .lc-nueva{ color:#ff5a1f !important; font-weight:600; letter-spacing:0; }
 .lc-chips{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
 .lc-chip{ border-radius:99px; padding:5px 12px; font-size:12.5px; background:#eef1f4; color:#374151; }
 .lc-chip b{ font-family:var(--font-mono,monospace); }
@@ -2191,6 +2193,7 @@ function lcEstilos(){
 .lc-sec h4{ margin:0 0 6px; font-size:14px; }
 .lc-acomodo{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
 .lc-acomodo label{ margin:0 0 3px; }
+.lc-btn{ padding:7px 12px !important; }
 `;
   document.head.appendChild(st);
 }
@@ -2287,22 +2290,25 @@ window.renderListaCajas = function(){
   } else {
     cont.innerHTML = `<div class="lc-grid">` + visibles.map(t => {
       if(t.tipo === "no"){
-        return `<div class="lc-tile no"><b>CAJA ${trEscape(t.k)}</b><small>INEXISTENTE</small></div>`;
+        return `<div class="lc-tile no" role="button" tabindex="0" data-nueva="${trEscape(t.k)}"><b>CAJA ${trEscape(t.k)}</b><small>INEXISTENTE</small><small class="lc-nueva">+ Agregar caja</small></div>`;
       }
       const c = t.c, { comps, pzs } = resumenCaja(c);
       const pend = esCajaPendiente(c);
       const clase = pend ? "pend" : (comps.length ? "" : "vacia");
       const lugar = pend ? "PENDIENTE DE ACOMODAR" : (c.ubicacion || "");
-      return `<button type="button" class="lc-tile ${clase}" data-ubic="${trEscape(c.ubicacion)}">` +
+      return `<div role="button" tabindex="0" class="lc-tile ${clase}" data-ubic="${trEscape(c.ubicacion)}">` +
         `<b>CAJA ${trEscape(c.caja || c.ubicacion)}</b>` +
         `<small>${trEscape(lugar)}</small>` +
-        `<small>${comps.length ? `${comps.length} ${comps.length === 1 ? "material" : "materiales"} · ${pzs} pzs` : "vacía"}</small></button>`;
+        `<small>${comps.length ? `${comps.length} ${comps.length === 1 ? "material" : "materiales"} · ${pzs} pzs` : "vacía"}</small></div>`;
     }).join("") + `</div>`;
     cont.querySelectorAll(".lc-tile[data-ubic]").forEach(b =>
       b.addEventListener("click", () => lcAbrir(b.dataset.ubic)));
+    cont.querySelectorAll(".lc-tile[data-nueva]").forEach(b =>
+      b.addEventListener("click", () => lcCrearCaja(b.dataset.nueva)));
   }
 
   if(lcAbierta) lcPintarContenido();
+  if(typeof window.renderToolRecuperar === "function") window.renderToolRecuperar();
 };
 
 function lcCerrar(){
@@ -2384,35 +2390,209 @@ function lcPintarContenido(){
   document.getElementById("lcAcomodarBtn").textContent = pend ? "Acomodar aquí" : "Mover aquí";
 
   const cont = document.getElementById("lcContenido");
-  if(!comps.length){
-    cont.innerHTML = `<p style="color:#6b7280;">Esta caja está vacía.</p>`;
-    return;
-  }
-  cont.innerHTML = `<table class="lc-tabla"><thead><tr><th>Material</th><th>PN</th><th style="text-align:right">Cant.</th><th></th></tr></thead><tbody>` +
-    comps.map((x,i) => `<tr><td>${trEscape(x.nombre)}${x.comentarios && x.comentarios !== "NO APLICA" ? `<br><small style="color:#6b7280">${trEscape(x.comentarios)}</small>` : ""}</td>` +
-      `<td>${trEscape(x.pn || "NO APLICA")}</td><td class="num">${Number(x.cantidad)||0}</td>` +
-      `<td><button type="button" class="btn-danger" data-i="${i}">Quitar</button></td></tr>`).join("") +
-    `</tbody></table>`;
-  cont.querySelectorAll("button[data-i]").forEach(b => b.onclick = () => lcQuitar(Number(b.dataset.i)));
+
+  const tabla = comps.length
+    ? `<table class="lc-tabla"><thead><tr><th>Material</th><th>PN</th><th style="text-align:right">Cant.</th><th>Quitar</th></tr></thead><tbody>` +
+      comps.map((x,i) => `<tr><td>${trEscape(x.nombre)}${x.comentarios && x.comentarios !== "NO APLICA" ? `<br><small style="color:#6b7280">${trEscape(x.comentarios)}</small>` : ""}</td>` +
+        `<td>${trEscape(x.pn || "NO APLICA")}</td><td class="num">${Number(x.cantidad)||0}</td>` +
+        `<td style="white-space:nowrap"><input type="number" min="1" max="${Number(x.cantidad)||0}" placeholder="cant." class="lc-q" data-i="${i}" style="width:74px;padding:6px 8px;">` +
+        ` <button type="button" class="lc-btn" data-parcial="${i}">Quitar</button>` +
+        ` <button type="button" class="btn-danger" data-todo="${i}">Todo</button></td></tr>`).join("") +
+      `</tbody></table>`
+    : `<p style="color:#6b7280;">Esta caja está vacía.</p>`;
+
+  const destruir = comps.length ? "" :
+    `<div class="lc-sec"><h4>Caja vacía</h4><button type="button" class="btn-danger" id="lcDestruirBtn">Destruir caja</button></div>`;
+
+  const agregar = `<div class="lc-sec"><h4>Agregar material a esta caja</h4>
+    <div class="lc-acomodo" style="grid-template-columns:2fr 1.4fr 1fr;">
+      <div><label>Material</label><input id="lcAddNombre" list="lcCatalogo" placeholder="Nombre del material" autocomplete="off"></div>
+      <div><label>PN (opcional)</label><input id="lcAddPn" placeholder="Número de parte" autocomplete="off"></div>
+      <div><label>Cantidad</label><input id="lcAddCant" type="number" min="1" placeholder="0"></div>
+    </div>
+    <datalist id="lcCatalogo">${(window.getMaterialesCatalogo ? window.getMaterialesCatalogo() : []).map(m => `<option value="${trEscape(m.nombre)}"></option>`).join("")}</datalist>
+    <div class="em-btns"><button type="button" id="lcAddBtn">+ Agregar material</button></div></div>`;
+
+  /* conserva lo que se está escribiendo en el formulario de agregar al refrescar */
+  const previo = { n: document.getElementById("lcAddNombre")?.value || "", p: document.getElementById("lcAddPn")?.value || "", c: document.getElementById("lcAddCant")?.value || "" };
+  cont.innerHTML = tabla + destruir + agregar;
+  document.getElementById("lcAddNombre").value = previo.n;
+  document.getElementById("lcAddPn").value = previo.p;
+  document.getElementById("lcAddCant").value = previo.c;
+
+  cont.querySelectorAll("button[data-parcial]").forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.parcial);
+    const inp = cont.querySelector(`.lc-q[data-i="${i}"]`);
+    const n = parseInt(inp && inp.value);
+    if(isNaN(n) || n <= 0){ alert("Escribe cuántas piezas quitar en el campo 'cant.'"); return; }
+    lcQuitar(i, n);
+  });
+  cont.querySelectorAll("button[data-todo]").forEach(b => b.onclick = () => lcQuitar(Number(b.dataset.todo), null));
+  const bd = document.getElementById("lcDestruirBtn");
+  if(bd) bd.onclick = lcDestruir;
+  document.getElementById("lcAddBtn").onclick = lcAgregarMaterial;
 }
 
-async function lcQuitar(i){
+async function lcQuitar(i, cantidad){
 
   const c = cacheCajas.find(x => x.ubicacion === lcAbierta);
   const comp = c && (c.componentes || [])[i];
   if(!comp) return;
 
   const disp = Number(comp.cantidad) || 0;
-  const r = prompt(`¿Cuántas piezas quitar de "${comp.nombre}"? (disponibles: ${disp})`, String(disp));
-  if(r === null) return;
-  const cant = parseInt(r);
-  if(isNaN(cant) || cant <= 0 || cant > disp){ alert("Cantidad inválida"); return; }
+  let cant = cantidad;
+  if(cant === null || cant === undefined){
+    if(!confirm(`¿Quitar TODO el material "${comp.nombre}" (${disp} pzs) de la caja ${c.caja || c.ubicacion}?`)) return;
+    cant = disp;
+  } else if(cant > disp){
+    alert(`Solo hay ${disp} piezas de este material en la caja.`);
+    return;
+  }
 
-  const ubic = lcAbierta;
-  const ok = await window.salidaRapida(ubic, comp.nombre, cant, "QUITADO DESDE LISTA DE CAJAS");
+  const ok = await window.salidaRapida(lcAbierta, comp.nombre, cant, "QUITADO DESDE LISTA DE CAJAS");
   if(ok){
     window.renderListaCajas();
     if(typeof window.renderRacksPage === "function") window.renderRacksPage();
+  }
+}
+
+async function lcAgregarMaterial(){
+
+  const nombre = document.getElementById("lcAddNombre").value.trim();
+  const pn = document.getElementById("lcAddPn").value.trim();
+  const cant = parseInt(document.getElementById("lcAddCant").value);
+  if(!nombre || isNaN(cant) || cant <= 0){ alert("Escribe el material y una cantidad mayor a 0"); return; }
+
+  const ok = await window.entradaRapida(lcAbierta, nombre, pn, cant, "AGREGADO DESDE LISTA DE CAJAS", "", "");
+  if(ok){
+    ["lcAddNombre","lcAddPn","lcAddCant"].forEach(id => { document.getElementById(id).value = ""; });
+    window.renderListaCajas();
+    if(typeof window.renderRacksPage === "function") window.renderRacksPage();
+  }
+}
+
+async function lcDestruir(){
+
+  const c = cacheCajas.find(x => x.ubicacion === lcAbierta);
+  if(!c) return;
+  if((c.componentes || []).length){ alert("Solo se puede destruir una caja vacía. Quita primero su material."); return; }
+  if(!confirm(`¿Destruir la caja ${c.caja || c.ubicacion}? Su número quedará como INEXISTENTE.`)) return;
+
+  try{
+    await deleteDoc(doc(db,"cajas", c.ubicacion));
+    try{ await deleteDoc(doc(db,"etiquetas", etqId(etqNumCaja(c)))); }catch(e){ console.error(e); }
+    await addHist({
+      ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(),
+      accion: "ELIMINACION MATERIAL", ubicacion: c.ubicacion, nombre: `CAJA ${c.caja || c.ubicacion} DESTRUIDA (VACÍA)`,
+      cantidad: 0, responsable: getUser(), comentarios: "CAJA VACIA DESTRUIDA DESDE LISTA DE CAJAS", sinFila: true
+    });
+    lcCerrar();
+    await loadCajas(true);
+    window.renderListaCajas();
+    if(typeof window.renderRacksPage === "function") window.renderRacksPage();
+  }catch(e){
+    console.error(e);
+    alert("Error destruyendo la caja");
+  }
+}
+
+/* número inexistente → crea la caja (queda PENDIENTE de acomodar) y la abre para agregarle material */
+async function lcCrearCaja(numero){
+
+  const caja = normCaja(numero);
+  if(cajaNumeroDuplicado(caja)){ alert(`La caja ${caja} ya existe.`); return; }
+  if(!confirm(`¿Agregar la caja ${caja}? Se crea vacía y queda como pendiente de acomodar; luego le puedes agregar material.`)) return;
+
+  const ubicacion = buildUbicacion("PEND", 1, 1, caja);
+  try{
+    const ref = doc(db,"cajas", ubicacion);
+    if((await getDoc(ref)).exists()){ alert("Ya existe un registro con ese número."); return; }
+    await setDoc(ref, { rack:"PEND", nivel:1, slot:1, caja, ubicacion, componentes:[], migracion:true, creadaDesdeLista:true });
+    await loadCajas(true);
+    window.renderListaCajas();
+    if(typeof window.renderRacksPage === "function") window.renderRacksPage();
+    lcAbrir(ubicacion);
+  }catch(e){
+    console.error(e);
+    alert("Error creando la caja");
+  }
+}
+
+/* =====================================================
+   RECUPERAR TOOL CRIB (solo administrador)
+   Las cajas que estaban en el rack B (Tool Crib) antes del reinicio de
+   pendientes conservan su rack/nivel/slot originales en la base: recuperarlas
+   solo les devuelve la marca de "acomodada", y vuelven exactamente a donde estaban.
+   ===================================================== */
+function cajasToolAntes(){
+  return cacheCajas.filter(c => esCajaPendiente(c) && esRackToolCrib(c.rack))
+    .sort((a,b) => String(a.caja).localeCompare(String(b.caja), undefined, {numeric:true}));
+}
+
+window.renderToolRecuperar = function(){
+
+  const cont = document.getElementById("toolRecuperarCont");
+  const card = document.getElementById("seccionToolRecuperar");
+  if(!cont || !card) return;
+
+  if(!isAdmin()){ card.style.display = "none"; return; }
+  card.style.display = "";
+  lcEstilos();
+
+  const lista = cajasToolAntes();
+  const piezas = lista.reduce((t,c) => t + (c.componentes||[]).reduce((a,x) => a + (Number(x.cantidad)||0), 0), 0);
+
+  if(!lista.length){
+    cont.innerHTML = `<p style="color:var(--ink-soft);">No hay cajas del Tool Crib por recuperar (ya fueron recuperadas o reacomodadas).</p>`;
+    return;
+  }
+
+  cont.innerHTML =
+    `<div class="lc-chips"><span class="lc-chip"><b>${lista.length}</b> cajas</span><span class="lc-chip"><b>${piezas}</b> piezas</span></div>` +
+    `<div style="margin:12px 0;"><button type="button" id="toolRecTodo">Recuperar todo el Tool Crib</button></div>` +
+    `<div class="table-wrap"><table><thead><tr><th>Caja</th><th>Posición anterior</th><th>Material</th><th></th></tr></thead><tbody>` +
+    lista.map(c => `<tr><td><b>${trEscape(c.caja || c.ubicacion)}</b></td><td>${trEscape(c.ubicacion)}</td>` +
+      `<td>${(c.componentes||[]).length ? (c.componentes||[]).map(x => `${trEscape(x.nombre)} × ${Number(x.cantidad)||0}`).join("<br>") : `<span style="color:var(--ink-soft)">vacía</span>`}</td>` +
+      `<td><button type="button" data-rec="${trEscape(c.ubicacion)}">Recuperar</button></td></tr>`).join("") +
+    `</tbody></table></div>`;
+
+  document.getElementById("toolRecTodo").onclick = () => recuperarToolCrib(null);
+  cont.querySelectorAll("button[data-rec]").forEach(b => b.onclick = () => recuperarToolCrib(b.dataset.rec));
+};
+
+async function recuperarToolCrib(ubicacion){
+
+  if(bloquearSiNoAdmin("Solo el administrador puede recuperar el Tool Crib.")) return;
+
+  const lista = ubicacion ? cajasToolAntes().filter(c => c.ubicacion === ubicacion) : cajasToolAntes();
+  if(!lista.length){ alert("No hay cajas por recuperar."); return; }
+  if(!confirm(`¿Recuperar ${lista.length} ${lista.length === 1 ? "caja" : "cajas"} del Tool Crib y regresarlas a su posición anterior en el rack B?`)) return;
+
+  try{
+    for(let i = 0; i < lista.length; i += 400){
+      const lote = writeBatch(db);
+      lista.slice(i, i + 400).forEach(c => {
+        lote.update(doc(db,"cajas", c.idDoc || c.ubicacion), {
+          acomodo2: true, acomodada: true, acomodadaPor: getUser(), acomodadaEn: Date.now(), recuperadaToolCrib: true
+        });
+      });
+      await lote.commit();
+    }
+    await addHist({
+      ts: Date.now(), sid: SESION_ID, fecha: new Date().toLocaleString(),
+      accion: "ACOMODO CAJA",
+      ubicacion: `TOOL CRIB · ${lista.length} CAJAS RECUPERADAS`,
+      nombre: "Recuperación de Tool Crib",
+      cantidad: lista.reduce((t,c) => t + (c.componentes||[]).reduce((a,x) => a + (Number(x.cantidad)||0), 0), 0),
+      responsable: getUser(), comentarios: "RECUPERACION DE TOOL CRIB A SU POSICION ANTERIOR", sinFila: true
+    });
+    await loadCajas(true);
+    if(typeof window.showStock === "function") await window.showStock(true);
+    if(typeof window.renderRacksPage === "function") await window.renderRacksPage();
+    alert("Tool Crib recuperado.");
+  }catch(e){
+    console.error(e);
+    alert("Error recuperando el Tool Crib");
   }
 }
 

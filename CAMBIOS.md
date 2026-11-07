@@ -516,3 +516,10 @@ En **Movimientos → Material a Tool Crib**:
   e importa como pendientes las 43 cajas del Excel (132–174; la 173 trae 2 cables distintos). Si una caja ya existe, no se duplica.
 - **Lista de cajas:** de la 1 a la última; las que no existen dicen INEXISTENTE. Clic en una caja: ver contenido, quitar material
   y acomodarla (si es pendiente) o moverla (si ya está acomodada).
+
+## Update: Lista de cajas — fondo blanco, edición completa y recuperación de Tool Crib
+
+- Las cajas de la lista ahora son siempre de fondo blanco (antes heredaban el estilo oscuro de los botones).
+- Dentro de una caja: quitar una parte de un material (cantidad + Quitar), quitar todo el material, agregar material y, si está vacía, **Destruir caja**.
+- Los números inexistentes se pueden pulsar para **agregar la caja** (queda vacía y pendiente de acomodar) y abrirla para agregarle material.
+- Nueva sección **Tool Crib anterior al reinicio** (solo admin): lista las cajas que estaban en el rack B con su posición anterior y las regresa ahí con un botón (todas o una por una).
