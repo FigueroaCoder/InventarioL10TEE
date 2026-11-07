@@ -533,3 +533,6 @@ En **Movimientos → Material a Tool Crib**:
 - **Revertir nombres ya aplicados:** en "Revertir actualización" hay una sección C con los loopbacks que tienen el nombre oficial pero sin registro del anterior; se escribe a qué nombre volver (para todos los 1.1 m y 0.5 m a la vez o uno por uno).
 
 - Panel de la Lista de cajas: nuevo botón **Revertir cambio de nombres** (lista todos los loopbacks con nombre NVIDIA, permite editar a qué nombre vuelve cada uno y confirmar). El anterior "Revertir actualización" pasó a llamarse **Revertir importación Excel**.
+
+- **Nombre oficial con LOOPBACK primero:** `LOOPBACK NVIDIA 1600 Gbps 1.1 m` / `LOOPBACK NVIDIA 1600 Gbps 0.5 m` (también para las cajas nuevas del Excel). Sigue siendo editable en la previsualización antes de aplicar.
+- **Revertir nombres:** cada loopback trae por defecto su nombre anterior (registro guardado → Historial → etiqueta de la caja), marcado y editable.

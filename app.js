@@ -213,16 +213,16 @@ function cajasDeSlot(rack, nivel, slot){
 LOOPBACKS — nombre único
 -------------------------------------------------------
 Todos los loopbacks se llaman igual, sin importar cómo se capturaron antes:
-   0.5 m  →  NVIDIA 1600 Gbps 0.5 m
-   1.1 m  →  NVIDIA 1600 Gbps 1.1 m
+   0.5 m  →  LOOPBACK NVIDIA 1600 Gbps 0.5 m
+   1.1 m  →  LOOPBACK NVIDIA 1600 Gbps 1.1 m
 Se reconocen por su número de parte (980-9IAL2-00X00A = 0.5 m,
 980-9IAL2-00X01B y TEMP-S000239598 = 1.1 m) o por su nombre (LOOPBACK ... 1.1 M).
 El administrador lo aplica (con previsualización y reversión) desde
 Racks y Cajas → Lista de cajas.
 ===================== */
 
-const LB_NOMBRE_05 = "NVIDIA 1600 Gbps 0.5 m";
-const LB_NOMBRE_11 = "NVIDIA 1600 Gbps 1.1 m";
+const LB_NOMBRE_05 = "LOOPBACK NVIDIA 1600 Gbps 0.5 m";
+const LB_NOMBRE_11 = "LOOPBACK NVIDIA 1600 Gbps 1.1 m";
 const LB_PN_05 = ["980-9IAL2-00X00A"];
 const LB_PN_11 = ["980-9IAL2-00X01B", "TEMP-S000239598"];
 
@@ -2029,7 +2029,7 @@ function excelFaltantes(){
 function lbPorRenombrar(){
   const items = [];
   cacheCajas.forEach(c => (c.componentes || []).forEach(comp => {
-    if(!comp) return;
+    if(!comp || comp.nombreOriginal || (comp.fusionados && comp.fusionados.length)) return;
     const canon = nombreCanonLoopback(comp.nombre, comp.pn);
     if(canon && lbTxt(comp.nombre) !== lbTxt(canon)){
       items.push({ ubic: c.ubicacion, caja: c.caja || c.ubicacion, actual: String(comp.nombre ?? ""), nuevo: canon,
@@ -2310,14 +2310,17 @@ window.revertirActualizacionMigracion = async function(){
      (p. ej. renombrados con la versión anterior): el administrador escribe el nombre anterior */
   const idsImportadas = new Set(cajasImportadas().map(c => c.ubicacion));
   const manuales = [];
+  const sugC = await lbSugerencias();
   cacheCajas.forEach(c => {
     if(idsImportadas.has(c.ubicacion)) return;
     (c.componentes || []).forEach(comp => {
       if(!comp || comp.nombreOriginal || (comp.fusionados && comp.fusionados.length)) return;
       const canon = nombreCanonLoopback(comp.nombre, comp.pn);
-      if(canon && lbTxt(comp.nombre) === lbTxt(canon)){
+      if(canon){
+        const sg = sugC(c, comp);
         manuales.push({ ubic: c.ubicacion, caja: c.caja || c.ubicacion, actual: comp.nombre, pn: comp.pn || "",
-                        cantidad: Number(comp.cantidad) || 0, tipo: canon === LB_NOMBRE_11 ? "11" : "05", anterior: "", incluir: false });
+                        cantidad: Number(comp.cantidad) || 0, tipo: canon === LB_NOMBRE_11 ? "11" : "05",
+                        anterior: sg ? sg.nombre : "", fuente: sg ? sg.fuente : "", incluir: !!(sg && sg.nombre) });
       }
     });
   });
@@ -2344,14 +2347,14 @@ window.revertirActualizacionMigracion = async function(){
         renombres.map((r,i) => `<tr><td><input type="checkbox" data-rr="${i}" ${r.incluir ? "checked" : ""}></td><td><b>${trEscape(r.caja)}</b></td>
           <td>${trEscape(r.actual)}</td><td>${trEscape(textoOriginales(r))}</td></tr>`).join("") + `</tbody></table>`
         : `<div class="pl-ok">No hay renombres por revertir.</div>`);
-    h += `<h4 class="pl-h5">C) Loopbacks con el nombre oficial SIN registro de su nombre anterior (${manuales.filter(x => x.incluir).length} marcados de ${manuales.length})</h4>` +
+    h += `<h4 class="pl-h5">C) Loopbacks con nombre NVIDIA/LOOPBACK SIN registro de su nombre anterior (${manuales.filter(x => x.incluir).length} marcados de ${manuales.length})</h4>` +
       (manuales.length ? `<p class="em-sub" style="margin:4px 0;">Escribe cómo se llamaban antes. Lo que escribas arriba se copia a todos los de esa medida (y los marca); después puedes editar uno por uno.</p>
         <div class="pl-head" style="margin:6px 0;">
           <b>Todos los 1.1 m volverían a:</b><input type="text" style="width:240px" data-rb="11" value="${trEscape(bulk["11"])}" placeholder="Ej. LOOPBACK 1.1 M">
           <b>Todos los 0.5 m volverían a:</b><input type="text" style="width:240px" data-rb="05" value="${trEscape(bulk["05"])}" placeholder="Ej. LOOPBACK 0.5 M"></div>
         <table class="pl-tabla"><thead><tr><th></th><th>Caja</th><th>Nombre actual</th><th>Volvería a (editable)</th><th>Cant.</th></tr></thead><tbody>` +
         manuales.map((m,i) => `<tr><td><input type="checkbox" data-rm="${i}" ${m.incluir ? "checked" : ""}></td><td><b>${trEscape(m.caja)}</b></td>
-          <td>${trEscape(m.actual)}</td><td><input type="text" data-rma="${i}" value="${trEscape(m.anterior)}"></td><td>${m.cantidad}</td></tr>`).join("") + `</tbody></table>`
+          <td>${trEscape(m.actual)}</td><td><input type="text" data-rma="${i}" value="${trEscape(m.anterior)}">${m.fuente ? `<small class="pl-ok">sugerido (${m.fuente})</small>` : ""}</td><td>${m.cantidad}</td></tr>`).join("") + `</tbody></table>`
         : `<div class="pl-ok">No hay loopbacks de este tipo.</div>`);
     h += `<p class="pl-aviso" style="margin-top:10px;">Las cajas ya acomodadas o con cantidades distintas vienen desmarcadas: al borrarlas se perdería lo que se hizo con ellas.</p>`;
     document.getElementById("plCuerpo").innerHTML = h;
@@ -2453,7 +2456,37 @@ window.revertirActualizacionMigracion = async function(){
 
 /* ---------- 3) REVERTIR SOLO EL CAMBIO DE NOMBRES DE LOOPBACKS ---------- */
 
-function lbFilasNombres(){
+/* Nombre que tenía un loopback antes de renombrarlo. Fuentes, en orden:
+   1) el registro guardado al renombrar con esta herramienta, 2) Historial (ediciones "nombre X → Y"),
+   3) la etiqueta de la caja (conserva el nombre con el que se creó). Si no hay nada, queda vacío. */
+async function lbSugerencias(){
+  const hist = new Map();
+  try{
+    const snap = await getDocs(collection(db,"historial"));
+    const arr = [];
+    snap.forEach(d => { const h = d.data(); if(h && h.accion === "ACTUALIZACION" && /nombre "/i.test(h.comentarios || "")) arr.push(h); });
+    arr.sort((a,b) => (a.ts || 0) - (b.ts || 0));
+    arr.forEach(h => { const m = /nombre "(.+?)" → "(.+?)"/.exec(h.comentarios); if(m) hist.set(lbTxt(m[2]), m[1]); });
+  }catch(e){ console.error("Sugerencias (historial):", e); }
+
+  return (c, comp) => {
+    if(comp.nombreOriginal) return { nombre: String(comp.nombreOriginal), fuente: "guardado" };
+    const h = hist.get(lbTxt(comp.nombre));
+    if(h && lbTxt(h) !== lbTxt(comp.nombre)) return { nombre: h, fuente: "historial" };
+    const e = (typeof cacheEtiquetas !== "undefined" ? cacheEtiquetas : []).find(x => x.idDoc === etqId(etqNumCaja(c)));
+    if(!e) return null;
+    const nAct = etqNorm(comp.nombre), pAct = etqNorm(comp.pn);
+    const tipo = nombreCanonLoopback(comp.nombre, comp.pn);
+    const mats = e.materiales || [];
+    let m = (pAct && pAct !== "NO APLICA") ? mats.find(x => x.nombre !== nAct && etqNorm(x.pn) === pAct) : null;
+    if(!m && tipo) m = mats.find(x => x.nombre !== nAct && nombreCanonLoopback(x.nombre, x.pn) === tipo);
+    if(m) return { nombre: m.nombre, fuente: "etiqueta" };
+    const f = tipo ? (e.filas || []).find(x => x.nom && x.nom !== nAct && nombreCanonLoopback(x.nom, "") === tipo) : null;
+    return f ? { nombre: f.nom, fuente: "etiqueta" } : null;
+  };
+}
+
+function lbFilasNombres(sug){
   const importadas = new Set(cajasImportadas().map(c => c.ubicacion));
   const filas = [];
   cacheCajas.forEach(c => {
@@ -2463,12 +2496,14 @@ function lbFilasNombres(){
       const canon = nombreCanonLoopback(comp.nombre, comp.pn);
       if(!canon) return;
       const reg = comp.fusionados && comp.fusionados.length;
+      const s = (!reg && sug) ? sug(c, comp) : null;
       filas.push({
         ubic: c.ubicacion, caja: c.caja || c.ubicacion, actual: String(comp.nombre ?? ""), pn: comp.pn || "",
         cantidad: Number(comp.cantidad) || 0, tipo: canon === LB_NOMBRE_11 ? "11" : "05",
         registro: reg ? comp.fusionados.map(f => `${f.nombre} × ${f.cantidad}`).join(" + ") : (comp.nombreOriginal || ""),
-        anterior: reg ? "" : String(comp.nombreOriginal || ""),
-        incluir: !!(reg || comp.nombreOriginal)
+        anterior: reg ? "" : String(comp.nombreOriginal || (s && s.nombre) || ""),
+        fuente: (!reg && s && !comp.nombreOriginal) ? s.fuente : "",
+        incluir: !!(reg || comp.nombreOriginal || (s && s.nombre))
       });
     });
   });
@@ -2480,13 +2515,13 @@ window.revertirNombresLoopbacks = async function(){
   if(bloquearSiNoAdmin("Solo el administrador puede revertir el cambio de nombres.")) return false;
   await loadCajas(true);
 
-  const filas = lbFilasNombres();
+  const filas = lbFilasNombres(await lbSugerencias());
   if(!filas.length){ alert("No hay loopbacks registrados en las cajas."); return false; }
   const bulk = { "11": "", "05": "" };
 
   const pintar = () => {
     document.getElementById("plCuerpo").innerHTML =
-      `<p class="em-sub" style="margin:4px 0;">Estos son todos los loopbacks que hay en cajas. Los que ya tienen guardado su nombre anterior vienen marcados; para los demás escribe a qué nombre deben volver (arriba puedes poner uno para todos los 1.1 m y otro para todos los 0.5 m).</p>
+      `<p class="em-sub" style="margin:4px 0;">Estos son todos los loopbacks que hay en cajas. Cada uno trae por defecto el nombre que tenía antes (del registro, el Historial o la etiqueta de la caja) y viene marcado; edítalo si quieres. Si no se encontró, escribe a qué nombre debe volver (arriba puedes poner uno para todos los 1.1 m y otro para todos los 0.5 m).</p>
        <div class="pl-head" style="margin:6px 0;">
          <b>Todos los 1.1 m volverían a:</b><input type="text" style="width:240px" data-rb="11" value="${trEscape(bulk["11"])}" placeholder="Ej. LOOPBACK 1.1 M">
          <b>Todos los 0.5 m volverían a:</b><input type="text" style="width:240px" data-rb="05" value="${trEscape(bulk["05"])}" placeholder="Ej. LOOPBACK 0.5 M"></div>
@@ -2494,7 +2529,7 @@ window.revertirNombresLoopbacks = async function(){
        <table class="pl-tabla"><thead><tr><th></th><th>Caja</th><th>Nombre actual</th><th>Volvería a (editable)</th><th>Cant.</th></tr></thead><tbody>` +
       filas.map((f,i) => `<tr><td><input type="checkbox" data-rf="${i}" ${f.incluir ? "checked" : ""}></td><td><b>${trEscape(f.caja)}</b></td>
         <td>${trEscape(f.actual)}</td>
-        <td>${f.registro && f.anterior === "" ? `<span class="pl-ok">${trEscape(f.registro)} (guardado)</span>` : `<input type="text" data-rfa="${i}" value="${trEscape(f.anterior)}">`}</td>
+        <td>${f.registro && f.anterior === "" ? `<span class="pl-ok">${trEscape(f.registro)} (guardado)</span>` : `<input type="text" data-rfa="${i}" value="${trEscape(f.anterior)}">${f.fuente ? `<small class="pl-ok">sugerido (${f.fuente})</small>` : ""}`}</td>
         <td>${f.cantidad}</td></tr>`).join("") + `</tbody></table>`;
   };
 
